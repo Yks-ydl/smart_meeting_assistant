@@ -1,0 +1,20 @@
+fastapi
+uvicorn
+pydantic
+openai
+requests
+python-dotenv
+websockets
+faster-whisper
+numpy
+# M2 混合摘要新增依赖
+transformers
+torch
+rouge-chinese
+jieba
+sentencepiece
+# M6 音频输入服务新增依赖
+sounddevice
+soundfile
+scipy
+httpx

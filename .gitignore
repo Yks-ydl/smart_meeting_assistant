@@ -1,0 +1,6 @@
+# 忽略名为 env 的单个文件
+env
+# 忽略experiments文件夹内的所有文件/子文件夹
+experiments/*
+
+__pycache__/
