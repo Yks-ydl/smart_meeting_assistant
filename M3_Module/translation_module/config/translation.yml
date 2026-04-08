@@ -1,0 +1,67 @@
+mode: "local"  # api | local
+
+api:
+  service: "siliconflow"  # deepl | google | siliconflow | custom
+  api_url: "https://api.siliconflow.cn/v1/chat/completions"
+  api_key: "${TRANSLATION_API_KEY}"
+  auth_header: "Authorization"
+  key_prefix: "Bearer"
+  batch_size: 3
+  timeout: 20.0
+  model: "Qwen/Qwen2.5-7B-Instruct"
+  temperature: 0.1
+  max_tokens: 512
+  text_field: "text"             # custom服务请求字段映射（siliconflow模式下忽略）
+  src_lang_field: "src_lang"
+  tgt_lang_field: "tgt_lang"
+  response_text_path: "text"     # custom服务响应字段路径(点号路径，siliconflow模式下忽略)
+  response_confidence_path: "confidence"
+
+local:
+  backend: "nllb"  # stub | nllb | llm
+  model_path: "models/opus-mt-en-zh"
+  quantized: true
+  device: "auto"  # auto | cpu | cuda
+  dev_channel:
+    enabled: true
+    glossary:
+      meeting: "会议"
+      action item: "行动项"
+      deadline: "截止时间"
+
+  # 专用多语言翻译模型配置（仅当 backend=nllb 时生效）
+  multilingual:
+    model_id: "facebook/nllb-200-distilled-600M"
+    device: "auto"
+    max_new_tokens: 256
+    num_beams: 4
+
+  # 本地 LLM 配置（仅当 backend=llm 时生效）
+  llm:
+    model_id: "Qwen/Qwen2.5-3B-Instruct"
+    device: "auto"  # auto | cpu | cuda | mps
+    quantization: "4bit"  # 4bit | 8bit | null
+    load_in_4bit: false
+    load_in_8bit: false
+    bnb_4bit_compute_dtype: "float16"
+    bnb_4bit_quant_type: "nf4"
+    bnb_4bit_use_double_quant: true
+    max_tokens: 256
+    temperature: 0.3
+    lora_adapter_path: null
+    prompt_template: null
+    dev_channel:
+      enabled: true
+      glossary:
+        meeting: "会议"
+        action item: "行动项"
+        deadline: "截止时间"
+        consensus: "共识"
+
+# 管道配置
+pipeline:
+  buffer_size: 3
+  max_delay_ms: 300
+  chunking:
+    min_size: 3
+    max_size: 20
