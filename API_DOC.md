@@ -160,24 +160,42 @@ ROUGE 指标评估。
 
 **请求体：**
 ```json
-{
-  "session_id": "会话ID",
-  "speaker": "张总",
-  "text": "发言内容"
-}
+[
+  {
+    "text": "发言原始内容（如果存在 corrected_text 则优先分析后者）",
+    "corrected_text": "可选：经过 ASR 纠错后的文本内容",
+    "start_time": "发言开始时间（浮点数，单位：秒）",
+    "end_time": "发言结束时间（浮点数，单位：秒）",
+    "speaker_label": "发言人唯一标识/姓名",
+    "language": "语种代码：'zh' 代表中文，'en' 代表英文"
+  }
+]
 ```
 
 **响应：**
 ```json
 {
-  "status": "success",
-  "session_id": "...",
-  "speaker": "张总",
-  "analysis": {
-    "sentiment": "positive",
-    "signal": "agreement",
-    "explanation": "分析理由"
-  }
+  "overall_summary": {
+    "total_turns": "本段会议总发言轮次数",
+    "dominant_signals": "出现频率最高的前三种交互信号（如：agreement, hesitation）",
+    "atmosphere": "整体会议氛围评估：'Positive/Constructive'（积极）或 'Critical/Tense'（紧张）"
+  },
+  "speaker_profiles": {
+    "发言人名称": {
+      "participation_count": "该发言人的总发言次数",
+      "top_emotion": "该发言人最主流的情感语调",
+      "primary_behavior": "该发言人表现最频繁的交互行为（如：confusion, appreciation）",
+      "interruption_count": "该发言人的插话/抢话次数"
+    }
+  },
+  "significant_moments": [
+    {
+      "timestamp": "显著时刻发生的时间范围 [开始, 结束]",
+      "speaker": "涉及的发言人",
+      "reason": "被标记为显著时刻的原因列表（包含信号类型或 interruption 插话标记）",
+      "snippet": "对应的文本片段摘要（前50个字符）"
+    }
+  ]
 }
 ```
 
