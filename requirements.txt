@@ -7,6 +7,9 @@ python-dotenv
 websockets
 faster-whisper
 numpy
+torchaudio
+librosa
+torchcodec
 # M2 混合摘要新增依赖
 transformers
 torch
