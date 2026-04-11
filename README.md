@@ -2,9 +2,11 @@
 
 这是一个基于“重后端、轻前端”前后端分离架构的智能会议助手。后端完全基于 Python 生态开发，采用了微服务（Microservices）架构。
 
+当前版本已将原 `Code/smart-meeting-frontend` 合并到本仓库 `frontend/` 目录，网关直接托管本地前端构建产物。
+
 ## 模块介绍
 
-本项目按照设计规划了以下五个核心微服务：
+本项目按照设计规划了以下核心微服务：
 
 - **M1 ASR Service** (`:8001`)：负责单轨语音处理，包括音频标准化、VAD、语言检测、ASR 与 BTS 风格后处理。
 - **M2 Summary Service** (`:8002`)：负责智能会议纪要生成，采用 Reconstruct-before-Summarize 架构。
@@ -12,6 +14,7 @@
 - **M4 Sentiment Service** (`:8004`)：负责会议情感与参与度分析。
 - **M5 Gateway Service** (`:8000`)：后端总网关，提供 WebSocket 接口给前端与其他服务。
 - **M6 Audio Input Service** (`:8005`)：负责读取本地目录中的多个独立 `.m4a` 音轨，逐轨调用 M1 并合并 transcript。
+- **M7 Data Service** (`:8006`)：负责加载 VCSum 数据并提供字幕流/摘要查询接口。
 
 ## 当前语音标准
 
@@ -38,8 +41,17 @@
    - `M1_MODEL_SIZE_OR_PATH`：如果要指定本地 whisper 模型路径
    - `M1_DEVICE`：默认 `cpu`
    - `M1_COMPUTE_TYPE`：默认 `int8`
+   - `VCSUM_SHORT_DATA_PATH`：可选，覆盖 M7 默认 short_train 数据路径
+   - `VCSUM_LONG_DATA_PATH`：可选，覆盖 M7 默认 long_train 数据路径
 
-3. **一键启动微服务集群**
+3. **构建前端静态资源（网关托管）**
+   ```bash
+   cd frontend
+   npm install
+   npm run build
+   ```
+
+4. **一键启动微服务集群**
    ```bash
    python start_all.py
    ```
@@ -84,3 +96,4 @@ curl -X POST http://127.0.0.1:8005/api/v1/audio/process_directory \
 - M4 情感分析服务：http://127.0.0.1:8004/docs
 - M5 主网关服务：http://127.0.0.1:8000/docs
 - M6 音频输入服务：http://127.0.0.1:8005/docs
+- M7 数据服务：http://127.0.0.1:8006/docs

@@ -14,6 +14,7 @@
 | M4 Sentiment | 8004 | 情感分析 |
 | M5 Gateway | 8000 | WebSocket 网关 |
 | M6 Audio Input | 8005 | 本地目录独立音轨处理 |
+| M7 Data Service | 8006 | VCSum 数据加载与字幕流 |
 
 ---
 
@@ -158,8 +159,28 @@
 
 ### GET `/`
 
-返回前端页面。
+返回前端页面（来自 `smart_meeting_assistant/frontend/dist` 构建产物）。
 
 ### WebSocket `/ws/meeting/{session_id}`
 
 当前第一阶段不改协议，语音主标准仍建议通过 M6 目录接口直接使用。
+
+---
+
+## M7 - 数据服务（:8006）
+
+### GET `/api/v1/data/status`
+
+返回数据服务加载状态与当前会议索引。
+
+### GET `/api/v1/data/stream`
+
+以 SSE 方式推送当前会议字幕流。
+
+### GET `/api/v1/data/summary/{meeting_id}`
+
+返回分段摘要、整体摘要、参与者与格式化 transcript。
+
+### POST `/api/v1/data/load`
+
+可选传入 `short_data_path` / `long_data_path` 重新加载数据文件。
