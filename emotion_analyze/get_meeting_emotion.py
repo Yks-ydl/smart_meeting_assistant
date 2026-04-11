@@ -2,7 +2,8 @@ import torch
 import json
 from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 from collections import Counter
-
+import os
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
 class MeetingSentimentAnalyzer:
     def __init__(self):
