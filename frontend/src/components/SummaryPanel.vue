@@ -1,6 +1,6 @@
 <template>
   <div class="summary-panel">
-    <div class="panel-header">
+    <div class="panel-header" v-if="!summary">
       <h2>会议总结</h2>
     </div>
 
