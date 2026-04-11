@@ -6,7 +6,6 @@
 import asyncio
 import json
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -16,25 +15,35 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Code"))
-
-from data_loader import load_vcsum_data, format_transcript, get_participants
+from core.vcsum_data import format_transcript, get_participants, load_vcsum_data
 
 app = FastAPI(title="M7 - VCSum Data Service", version="1.0.0")
 
 
 class DataServiceState:
     def __init__(self):
-        self.short_data_path = Path(
-            r"f:\课程\Semester B\CS6493 Natural Language Processing\NLP Project\VCSum\vcsum_data\short_train.txt"
+        project_root = Path(__file__).resolve().parents[2]
+        default_short_path = project_root / "VCSum" / "vcsum_data" / "short_train.txt"
+        default_long_path = project_root / "VCSum" / "vcsum_data" / "long_train.txt"
+
+        # Keep one canonical path-resolution flow so tests and runtime share the same behavior.
+        self.short_data_path = self._resolve_data_path(
+            env_key="VCSUM_SHORT_DATA_PATH", default_path=default_short_path
         )
-        self.long_data_path = Path(
-            r"f:\课程\Semester B\CS6493 Natural Language Processing\NLP Project\VCSum\vcsum_data\long_train.txt"
+        self.long_data_path = self._resolve_data_path(
+            env_key="VCSUM_LONG_DATA_PATH", default_path=default_long_path
         )
         self.test_meetings: List[Dict] = []
         self.overall_summaries: Dict[str, str] = {}
         self.current_index = 0
         self.is_loaded = False
+
+    @staticmethod
+    def _resolve_data_path(env_key: str, default_path: Path) -> Path:
+        raw_value = os.getenv(env_key, "").strip()
+        if raw_value:
+            return Path(raw_value)
+        return default_path
 
     def load_data(self):
         if self.is_loaded:
