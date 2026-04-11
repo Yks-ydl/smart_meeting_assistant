@@ -1,99 +1,106 @@
+from __future__ import annotations
+
+import os
+import sys
+
+import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
-import uvicorn
-import sys
-import os
-import json
-import base64
-import tempfile
 
 # 解决 Windows 环境下常见的 OMP 冲突报错
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-from faster_whisper import WhisperModel
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from core.llm_utils import call_llm
+from m1_speech.service import SingleTrackSpeechService
+from m1_speech.utils.config import ASRConfig, InputConfig, PipelineConfig, PostProcessConfig, SpeakerConfig, VADConfig
 
 app = FastAPI(title="M1 - ASR & Speech Processing Service")
 
-# 初始化 Faster Whisper 模型 (首次运行会自动下载模型权重)
-# 为了兼顾速度和准确率，默认使用 'small' 或 'base' 模型。如果在有GPU的机器上可改为 "cuda"
-print("Loading Whisper Model...")
-model = WhisperModel("base", device="cpu", compute_type="int8")
-print("Whisper Model Loaded.")
+
+def build_pipeline_config() -> PipelineConfig:
+    """构建 M1 服务默认配置。"""
+
+    model_size = os.getenv("M1_MODEL_SIZE_OR_PATH", "small")
+    return PipelineConfig(
+        asr=ASRConfig(
+            model_size=model_size,
+            device=os.getenv("M1_DEVICE", "cpu"),
+            compute_type=os.getenv("M1_COMPUTE_TYPE", "int8"),
+            language=None,
+            detect_language_first=True,
+            multilingual=True,
+            beam_size=int(os.getenv("M1_BEAM_SIZE", "5")),
+            vad_filter=True,
+            sample_rate=int(os.getenv("M1_SAMPLE_RATE", "16000")),
+        ),
+        vad=VADConfig(
+            enabled=True,
+            energy_threshold=float(os.getenv("M1_VAD_ENERGY_THRESHOLD", "0.01")),
+        ),
+        speaker=SpeakerConfig(
+            label_mode=os.getenv("M1_SPEAKER_LABEL_MODE", "regex_name"),
+            name_pattern=os.getenv("M1_SPEAKER_NAME_PATTERN", r"^audio([A-Za-z]+?)(\d+)?$"),
+            fallback_mode=os.getenv("M1_SPEAKER_FALLBACK_MODE", "source_id"),
+        ),
+        postprocess=PostProcessConfig(enabled=True),
+        input=InputConfig(glob_pattern="*.wav", recursive=False),
+    )
+
+
+speech_service = SingleTrackSpeechService(build_pipeline_config())
+
 
 class AudioData(BaseModel):
-    # 接收 base64 编码的音频数据 (通常是 webm 或 wav 格式)
-    audio_base64: str = ""
+    """M1 单轨处理接口请求模型。"""
+
+    audio_base64: str
     session_id: str
+    speaker_hint: str | None = None
+    source_channel: str | None = None
+    chunk_start_time: float = 0.0
+    language_hint: str | None = None
+    audio_format: str = "webm"
+
 
 @app.post("/api/v1/asr/transcribe")
 async def transcribe(audio: AudioData):
     """
-    接收真实的音频数据流（Base64），使用 Faster-Whisper 进行真实的语音转文字。
+    接收单条独立音轨，先检测语言，再执行 ASR，并返回统一 transcript 结构。
     """
-    if not audio.audio_base64 or audio.audio_base64 == "base64_encoded_audio_placeholder_string":
-        # 兼容旧的“模拟发送”逻辑，如果没有真实音频，依然用大模型 mock
-        system_prompt = """你是一个会议记录生成器。请随机生成一句短小精悍的中文会议发言（不超过30字），并且随机指定一个发言人名字（如：张总、李工、王经理）。
-请必须返回严格的 JSON 格式，包含两个字段："speaker" 和 "text"."""
-        user_prompt = "请生成下一句会议发言。"
-        llm_response = call_llm(system_prompt=system_prompt, user_prompt=user_prompt)
-        
-        speaker = "Unknown"
-        text = "..."
-        try:
-            clean_json = llm_response.replace('```json', '').replace('```', '').strip()
-            data = json.loads(clean_json)
-            speaker = data.get("speaker", "Speaker_A")
-            text = data.get("text", "未能解析文本")
-        except Exception as e:
-            text = f"LLM生成内容解析失败: {llm_response}"
 
+    if not audio.audio_base64:
         return {
-            "status": "success",
+            "status": "error",
             "session_id": audio.session_id,
-            "speaker": speaker,
-            "text": text
+            "message": "audio_base64 is required",
         }
-    
-    # ---------------- 真实语音处理流程 ----------------
-    text = ""
-    speaker = "Speaker_1" # 简化版暂不实现声纹分离，统一分配为Speaker_1
-    
+
     try:
-        # 解码 Base64 音频数据
-        audio_bytes = base64.b64decode(audio.audio_base64)
-        
-        # 将音频保存为临时文件，供 whisper 处理
-        # 前端 MediaRecorder 录制的通常是 webm 格式
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_file:
-            tmp_file.write(audio_bytes)
-            tmp_path = tmp_file.name
+        audio_bytes = speech_service.decode_base64_audio(audio.audio_base64)
+        return speech_service.transcribe_bytes(
+            audio_bytes=audio_bytes,
+            session_id=audio.session_id,
+            suffix=audio.audio_format,
+            speaker_hint=audio.speaker_hint,
+            source_channel=audio.source_channel,
+            chunk_start_time=audio.chunk_start_time,
+            language_hint=audio.language_hint,
+        )
+    except Exception as error:
+        print(f"[M1] ASR processing failed: {error}")
+        return {
+            "status": "error",
+            "session_id": audio.session_id,
+            "message": str(error),
+            "speaker": audio.speaker_hint or audio.source_channel or "Unknown",
+        }
 
-        # 调用 faster-whisper 进行转录
-        segments, info = model.transcribe(tmp_path, beam_size=5, language="zh")
-        
-        for segment in segments:
-            text += segment.text + " "
-            
-        # 清理临时文件
-        os.remove(tmp_path)
-        
-        text = text.strip()
-        if not text:
-            text = "[未识别到有效语音]"
-            
-    except Exception as e:
-        print(f"ASR Error: {e}")
-        text = f"[音频解析错误: {str(e)}]"
 
-    return {
-        "status": "success",
-        "session_id": audio.session_id,
-        "speaker": speaker,
-        "text": text
-    }
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "service": "M1 - ASR & Speech Processing Service"}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)
