@@ -6,7 +6,7 @@ import httpx
 import asyncio
 import json
 import uvicorn
-import os
+from pathlib import Path
 
 app = FastAPI(title="M5 - Main Gateway & Orchestrator")
 
@@ -18,18 +18,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-frontend_dir = os.path.abspath(
-    os.path.join(
-        os.path.dirname(__file__), "..", "..", "Code", "smart-meeting-frontend", "dist"
-    )
-)
-if os.path.isdir(frontend_dir):
-    app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+def resolve_frontend_dist_dir() -> Path:
+    """Use a single in-repo frontend location to avoid cross-project path coupling."""
+    return Path(__file__).resolve().parents[1] / "frontend" / "dist"
+
+
+frontend_dir = resolve_frontend_dist_dir()
+if frontend_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
 
     @app.get("/")
     async def serve_frontend():
         """返回前端主页"""
-        return FileResponse(os.path.join(frontend_dir, "index.html"))
+        return FileResponse(str(frontend_dir / "index.html"))
 
 
 # 各微服务的本地地址配置
