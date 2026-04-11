@@ -45,6 +45,7 @@ SERVICES = {
     "audio_upload": "http://127.0.0.1:8005/api/v1/audio/upload_multitrack",
     "audio_status": "http://127.0.0.1:8005/api/v1/audio/status",
     "audio_tracks": "http://127.0.0.1:8005/api/v1/audio/tracks",
+    "data_status": "http://127.0.0.1:8006/api/v1/data/status",
     "data_stream": "http://127.0.0.1:8006/api/v1/data/stream",
 }
 
@@ -78,7 +79,10 @@ def normalize_target_lang(value: str | None) -> str:
 
 
 async def call_service(
-    client: httpx.AsyncClient, url: str, payload: dict = None, method: str = "POST"
+    client: httpx.AsyncClient,
+    url: str,
+    payload: dict | list | None = None,
+    method: str = "POST",
 ):
     try:
         if method == "POST":
@@ -88,6 +92,69 @@ async def call_service(
         return response.json()
     except Exception as e:
         return {"error": str(e)}
+
+
+def parse_timestamp_to_seconds(value, fallback: float) -> float:
+    if isinstance(value, (int, float)):
+        return max(0.0, float(value))
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return fallback
+
+        try:
+            return max(0.0, float(text))
+        except ValueError:
+            pass
+
+        parts = text.split(":")
+        if len(parts) in {2, 3}:
+            try:
+                nums = [float(part) for part in parts]
+            except ValueError:
+                nums = []
+
+            if nums:
+                if len(nums) == 2:
+                    minutes, seconds = nums
+                    return max(0.0, minutes * 60 + seconds)
+                hours, minutes, seconds = nums
+                return max(0.0, hours * 3600 + minutes * 60 + seconds)
+
+    return fallback
+
+
+def append_sentiment_turn(sentiment_turns_ref: dict, raw_turn: dict):
+    # Centralize turn normalization so demo/realtime paths share identical M4 input format.
+    text = str(raw_turn.get("corrected_text") or raw_turn.get("text") or "").strip()
+    if not text:
+        return
+
+    speaker = str(raw_turn.get("speaker_label") or raw_turn.get("speaker") or "").strip()
+    if not speaker:
+        speaker = "Unknown"
+
+    language = normalize_target_lang(str(raw_turn.get("language") or "zh"))
+
+    fallback_start = float(len(sentiment_turns_ref["items"]))
+    start_time = parse_timestamp_to_seconds(
+        raw_turn.get("start_time", raw_turn.get("timestamp")), fallback_start
+    )
+    end_time = parse_timestamp_to_seconds(raw_turn.get("end_time"), start_time + 1.5)
+    if end_time <= start_time:
+        end_time = start_time + 1.0
+
+    sentiment_turns_ref["items"].append(
+        {
+            "text": str(raw_turn.get("text") or text),
+            "corrected_text": text,
+            "start_time": round(start_time, 3),
+            "end_time": round(end_time, 3),
+            "speaker_label": speaker,
+            "language": language,
+        }
+    )
 
 
 async def process_translation_async(
@@ -123,41 +190,46 @@ async def process_translation_async(
         print(f"[Gateway] Translation error for subtitle {subtitle_id}: {e}")
 
 
-async def process_sentiment_async(
-    client: httpx.AsyncClient,
-    session_id: str,
-    subtitle_id: str,
-    speaker: str,
-    text: str,
-    websocket: WebSocket,
-):
-    """异步处理情感分析，不阻塞字幕流"""
-    try:
-        sentiment_res = await call_service(
-            client,
-            SERVICES["sentiment"],
-            {
-                "session_id": session_id,
-                "speaker": speaker,
-                "text": text,
-            },
-        )
-        await manager.send_message(
-            {"type": "sentiment", "data": sentiment_res}, websocket
-        )
-    except Exception as e:
-        print(f"[Gateway] Sentiment error for subtitle {subtitle_id}: {e}")
-
-
 async def stream_demo_data(
     client: httpx.AsyncClient,
     session_id: str,
     websocket: WebSocket,
     full_text_ref: dict,
     target_lang_ref: dict,
+    sentiment_turns_ref: dict,
 ):
     """从数据服务获取 VCSum 字幕流并推送"""
     try:
+        status_res = await call_service(
+            client,
+            SERVICES["data_status"],
+            method="GET",
+        )
+
+        if status_res.get("error"):
+            await manager.send_message(
+                {
+                    "type": "error",
+                    "data": {
+                        "message": f"M7 数据服务不可达，请检查 8006 服务：{status_res['error']}"
+                    },
+                },
+                websocket,
+            )
+            return
+
+        if not status_res.get("is_loaded"):
+            await manager.send_message(
+                {
+                    "type": "error",
+                    "data": {
+                        "message": "M7 数据服务尚未加载完成，请稍后重试开始会议。"
+                    },
+                },
+                websocket,
+            )
+            return
+
         async with client.stream(
             "GET", SERVICES["data_stream"], timeout=300.0
         ) as response:
@@ -178,17 +250,7 @@ async def stream_demo_data(
                         )
                         full_text_ref["text"] += f"[{sub['speaker']}]: {sub['text']}\n"
 
-                        # 情感分析改为异步执行，不阻塞字幕流
-                        asyncio.create_task(
-                            process_sentiment_async(
-                                client,
-                                session_id,
-                                subtitle_id,
-                                sub["speaker"],
-                                sub["text"],
-                                websocket,
-                            )
-                        )
+                        append_sentiment_turn(sentiment_turns_ref, sub)
 
                         # 翻译改为异步执行，不阻塞下一条字幕
                         asyncio.create_task(
@@ -213,6 +275,16 @@ async def stream_demo_data(
                     continue
     except Exception as e:
         print(f"[Gateway] Demo stream error: {e}")
+        try:
+            await manager.send_message(
+                {
+                    "type": "error",
+                    "data": {"message": f"字幕流异常，请检查 M7 数据服务: {e}"},
+                },
+                websocket,
+            )
+        except Exception:
+            pass
 
 
 @app.websocket("/ws/meeting/{session_id}")
@@ -223,6 +295,8 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
     await manager.connect(websocket)
     full_text_ref = {"text": ""}  # 用于存储会议全文
     target_lang_ref = {"value": "en"}
+    sentiment_turns_ref = {"items": []}
+    sentiment_enabled_ref = {"value": True}
 
     try:
         async with httpx.AsyncClient() as client:
@@ -235,6 +309,11 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
 
                 if message.get("type") == "start_meeting":
                     mode = message.get("mode", "demo")
+                    full_text_ref["text"] = ""
+                    sentiment_turns_ref["items"] = []
+                    sentiment_enabled_ref["value"] = bool(
+                        message.get("sentiment_enabled", True)
+                    )
                     target_lang_ref["value"] = normalize_target_lang(
                         message.get("target_lang")
                     )
@@ -258,6 +337,7 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                                 websocket,
                                 full_text_ref,
                                 target_lang_ref,
+                                sentiment_turns_ref,
                             )
                         )
 
@@ -302,41 +382,34 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                             {"type": "asr_result", "data": asr_result}, websocket
                         )
 
-                        # 2. Pipeline 阶段二：并行调用下游微服务
-                        # - 情感分析
-                        sentiment_payload = {
-                            "session_id": session_id,
-                            "speaker": speaker,
-                            "text": text,
-                        }
-                        # - 翻译
+                        append_sentiment_turn(
+                            sentiment_turns_ref,
+                            {
+                                "text": text,
+                                "corrected_text": asr_result.get("corrected_text"),
+                                "speaker_label": speaker,
+                                "start_time": asr_result.get("start_time"),
+                                "end_time": asr_result.get("end_time"),
+                                "language": asr_result.get("language"),
+                            },
+                        )
+
+                        # 2. Pipeline 阶段二：调用翻译微服务
                         translation_payload = {
                             "session_id": session_id,
                             "text": text,
                             "target_lang": target_lang_ref["value"],
                         }
 
-                        sentiment_task = asyncio.create_task(
-                            call_service(
-                                client, SERVICES["sentiment"], sentiment_payload
-                            )
-                        )
-                        translation_task = asyncio.create_task(
-                            call_service(
-                                client, SERVICES["translation"], translation_payload
-                            )
+                        translation_res = await call_service(
+                            client, SERVICES["translation"], translation_payload
                         )
 
-                        sentiment_res, translation_res = await asyncio.gather(
-                            sentiment_task, translation_task
-                        )
-
-                        # 推送情感与翻译结果
+                        # 推送翻译结果
                         await manager.send_message(
                             {
                                 "type": "analysis_result",
                                 "data": {
-                                    "sentiment": sentiment_res,
                                     "translation": translation_res,
                                 },
                             },
@@ -351,6 +424,7 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                     )
                     summary_payload = {"session_id": session_id, "text": full_text}
                     action_payload = {"session_id": session_id, "text": full_text}
+                    sentiment_payload = sentiment_turns_ref["items"]
 
                     summary_task = asyncio.create_task(
                         call_service(client, SERVICES["summary"], summary_payload)
@@ -359,17 +433,35 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                         call_service(client, SERVICES["action"], action_payload)
                     )
 
-                    summary_res, action_res = await asyncio.gather(
-                        summary_task, action_task
-                    )
+                    if sentiment_enabled_ref["value"]:
+                        sentiment_task = asyncio.create_task(
+                            call_service(client, SERVICES["sentiment"], sentiment_payload)
+                        )
+                        summary_res, action_res, sentiment_res = await asyncio.gather(
+                            summary_task, action_task, sentiment_task
+                        )
+                    else:
+                        summary_res, action_res = await asyncio.gather(
+                            summary_task, action_task
+                        )
+                        sentiment_res = None
 
                     await manager.send_message(
                         {
                             "type": "meeting_end_report",
-                            "data": {"summary": summary_res, "actions": action_res},
+                            "data": {
+                                "summary": summary_res,
+                                "actions": action_res,
+                                "sentiment": sentiment_res,
+                            },
                         },
                         websocket,
                     )
+
+                    if sentiment_enabled_ref["value"] and sentiment_res is not None:
+                        await manager.send_message(
+                            {"type": "sentiment", "data": sentiment_res}, websocket
+                        )
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)

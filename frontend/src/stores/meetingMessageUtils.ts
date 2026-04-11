@@ -1,5 +1,7 @@
 export type ShortLanguageCode = "zh" | "en" | "ja";
 
+import type { SentimentData } from "../types";
+
 type ActionItemLike = {
   task: string;
   assignee?: string;
@@ -48,24 +50,169 @@ export function isTargetLanguageLocked(isMeetingRunning: boolean): boolean {
   return isMeetingRunning;
 }
 
-export function extractSentimentLabel(
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function normalizeDominantSignals(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        return item.trim();
+      }
+
+      if (Array.isArray(item) && item.length > 0) {
+        return toCleanString(item[0]);
+      }
+
+      return "";
+    })
+    .filter((item) => item.length > 0);
+}
+
+function normalizeSpeakerProfiles(
+  value: unknown,
+): SentimentData["speaker_profiles"] {
+  if (!isObject(value)) {
+    return {};
+  }
+
+  const normalized: SentimentData["speaker_profiles"] = {};
+
+  for (const [speaker, rawProfile] of Object.entries(value)) {
+    if (!isObject(rawProfile)) {
+      continue;
+    }
+
+    normalized[speaker] = {
+      participation_count: Math.max(
+        0,
+        Math.floor(toFiniteNumber(rawProfile.participation_count) ?? 0),
+      ),
+      top_emotion: toCleanString(rawProfile.top_emotion) || "N/A",
+      primary_behavior: toCleanString(rawProfile.primary_behavior) || "Neutral",
+      interruption_count: Math.max(
+        0,
+        Math.floor(toFiniteNumber(rawProfile.interruption_count) ?? 0),
+      ),
+    };
+  }
+
+  return normalized;
+}
+
+function normalizeSignificantMoments(
+  value: unknown,
+): SentimentData["significant_moments"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (!isObject(item)) {
+        return null;
+      }
+
+      let timestamp: [number, number] | string = "";
+      if (Array.isArray(item.timestamp) && item.timestamp.length >= 2) {
+        const start = toFiniteNumber(item.timestamp[0]);
+        const end = toFiniteNumber(item.timestamp[1]);
+        if (start !== null && end !== null) {
+          timestamp = [start, end];
+        }
+      }
+      if (!timestamp) {
+        timestamp = toCleanString(item.timestamp) || "未知";
+      }
+
+      const reason = Array.isArray(item.reason)
+        ? item.reason
+            .map((entry) => toCleanString(entry))
+            .filter((entry) => entry.length > 0)
+        : [];
+
+      return {
+        timestamp,
+        speaker: toCleanString(item.speaker) || "Unknown",
+        reason,
+        snippet: toCleanString(item.snippet),
+      };
+    })
+    .filter(
+      (item): item is SentimentData["significant_moments"][number] =>
+        item !== null,
+    );
+}
+
+function unwrapSentimentPayload(
   payload: unknown,
-): "positive" | "neutral" | "negative" {
+): Record<string, unknown> | null {
   if (!isObject(payload)) {
-    return "neutral";
+    return null;
   }
 
-  const nested = isObject(payload.analysis)
-    ? toCleanString(payload.analysis.sentiment)
-    : "";
-  const flat = toCleanString(payload.sentiment);
-  const label = (nested || flat).toLowerCase();
-
-  if (label === "positive" || label === "negative" || label === "neutral") {
-    return label;
+  if (isObject(payload.result)) {
+    return payload.result;
   }
 
-  return "neutral";
+  if (isObject(payload.data) && isObject(payload.data.result)) {
+    return payload.data.result;
+  }
+
+  if (isObject(payload.data) && isObject(payload.data.overall_summary)) {
+    return payload.data;
+  }
+
+  if (isObject(payload.overall_summary)) {
+    return payload;
+  }
+
+  return null;
+}
+
+export function normalizeSentimentReport(
+  payload: unknown,
+): SentimentData | null {
+  const rawReport = unwrapSentimentPayload(payload);
+  if (!rawReport || !isObject(rawReport.overall_summary)) {
+    return null;
+  }
+
+  const totalTurns = toFiniteNumber(rawReport.overall_summary.total_turns);
+  const atmosphere = toCleanString(rawReport.overall_summary.atmosphere);
+  if (totalTurns === null || atmosphere.length === 0) {
+    return null;
+  }
+
+  return {
+    overall_summary: {
+      total_turns: Math.max(0, Math.floor(totalTurns)),
+      dominant_signals: normalizeDominantSignals(
+        rawReport.overall_summary.dominant_signals,
+      ),
+      atmosphere,
+    },
+    speaker_profiles: normalizeSpeakerProfiles(rawReport.speaker_profiles),
+    significant_moments: normalizeSignificantMoments(
+      rawReport.significant_moments,
+    ),
+  };
 }
 
 function parseLineActionItem(line: string): ActionItemLike | null {
@@ -184,14 +331,6 @@ export function deriveKeyPoints(
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
     .slice(0, 5);
-}
-
-export function shouldMarkSentimentStalled(
-  subtitleCount: number,
-  sentimentMessageCount: number,
-  threshold: number = 6,
-): boolean {
-  return subtitleCount >= threshold && sentimentMessageCount === 0;
 }
 
 export function extractAnalysisResultPayloads(data: unknown): {

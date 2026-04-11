@@ -21,12 +21,14 @@
           <div class="realtime-section" v-if="isRunning">
             <div class="panel-row">
               <SubtitlePanel />
-              <SentimentPanel v-if="config.sentimentEnabled && isRunning" />
             </div>
           </div>
 
           <div class="summary-section" v-if="showSummary">
-            <SummaryPanel />
+            <div class="summary-panel-row">
+              <SummaryPanel />
+              <SentimentPanel v-if="config.sentimentEnabled" />
+            </div>
           </div>
 
           <div class="welcome-section" v-if="!isRunning && !showSummary">
@@ -68,7 +70,7 @@ import SubtitlePanel from './components/SubtitlePanel.vue'
 import SentimentPanel from './components/SentimentPanel.vue'
 import SummaryPanel from './components/SummaryPanel.vue'
 
-const { isRunning, summary, config } = useMeetingStore()
+const { isRunning, config } = useMeetingStore()
 
 const showSummary = ref(false)
 
@@ -195,11 +197,18 @@ watch(isRunning, (running) => {
 
 .panel-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 24px;
   align-items: stretch;
   flex: 1;
   min-height: 0;
+}
+
+.summary-panel-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
 }
 
 .welcome-section {
@@ -281,7 +290,7 @@ watch(isRunning, (running) => {
 }
 
 @media (max-width: 1200px) {
-  .panel-row {
+  .summary-panel-row {
     grid-template-columns: 1fr;
   }
 }

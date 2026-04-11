@@ -4,6 +4,12 @@ import sys
 import os
 
 
+def terminate_processes(processes):
+    for proc in processes:
+        if proc.poll() is None:
+            proc.terminate()
+
+
 def start_services():
     print(" 正在启动智能会议助手微服务集群...")
 
@@ -45,6 +51,7 @@ def start_services():
     ]
 
     processes = []
+    failed_services = []
 
     for svc in services:
         print(f"启动 {svc['name']} (Port: {svc['port']})...")
@@ -52,6 +59,25 @@ def start_services():
         p = subprocess.Popen([sys.executable, svc["script"]])
         processes.append(p)
         time.sleep(1)  # 稍微延迟，避免输出混乱
+
+        exit_code = p.poll()
+        if exit_code is not None:
+            failed_services.append(
+                {
+                    "name": svc["name"],
+                    "port": svc["port"],
+                    "exit_code": exit_code,
+                }
+            )
+
+    if failed_services:
+        print("\n 以下服务启动失败：")
+        for svc in failed_services:
+            print(
+                f" - {svc['name']} (Port: {svc['port']})，退出码: {svc['exit_code']}"
+            )
+        terminate_processes(processes)
+        return 1
 
     print("\n 所有服务已启动！")
     print(
@@ -63,17 +89,26 @@ def start_services():
     print("\n按 Ctrl+C 停止所有服务...")
 
     try:
-        # 保持主进程运行
-        for p in processes:
-            p.wait()
+        # 持续监控子进程，一旦有服务异常退出则停止全部服务。
+        while True:
+            for idx, p in enumerate(processes):
+                exit_code = p.poll()
+                if exit_code is not None:
+                    svc = services[idx]
+                    print(
+                        f"\n {svc['name']} (Port: {svc['port']}) 异常退出，退出码: {exit_code}"
+                    )
+                    terminate_processes(processes)
+                    return 1
+            time.sleep(1)
     except KeyboardInterrupt:
         print("\n正在停止所有服务...")
-        for p in processes:
-            p.terminate()
+        terminate_processes(processes)
         print("所有服务已安全停止。")
+        return 0
 
 
 if __name__ == "__main__":
     start_all_script_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(start_all_script_dir)
-    start_services()
+    sys.exit(start_services())

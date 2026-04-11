@@ -3,11 +3,10 @@ import {
   buildActionItems,
   deriveKeyPoints,
   extractAnalysisResultPayloads,
-  extractSentimentLabel,
   isTargetLanguageLocked,
+  normalizeSentimentReport,
   normalizeTargetLanguage,
   resolveSubtitleTranslationDisplay,
-  shouldMarkSentimentStalled,
 } from "./meetingMessageUtils";
 
 describe("normalizeTargetLanguage", () => {
@@ -24,25 +23,88 @@ describe("normalizeTargetLanguage", () => {
   });
 });
 
-describe("extractSentimentLabel", () => {
-  test("reads nested analysis payload", () => {
+describe("normalizeSentimentReport", () => {
+  test("normalizes a valid M4 sentiment report payload", () => {
+    const payload = {
+      overall_summary: {
+        total_turns: 4,
+        dominant_signals: [
+          ["agreement", 3],
+          ["hesitation", 1],
+        ],
+        atmosphere: "Positive/Constructive",
+      },
+      speaker_profiles: {
+        Alice: {
+          participation_count: 2,
+          top_emotion: "开心语调",
+          primary_behavior: "agreement",
+          interruption_count: 0,
+        },
+      },
+      significant_moments: [
+        {
+          timestamp: [12.3, 16.8],
+          speaker: "Alice",
+          reason: ["urgency", "interruption"],
+          snippet: "我们必须在今天下班前完成。",
+        },
+      ],
+    };
+
+    expect(normalizeSentimentReport(payload)).toEqual({
+      overall_summary: {
+        total_turns: 4,
+        dominant_signals: ["agreement", "hesitation"],
+        atmosphere: "Positive/Constructive",
+      },
+      speaker_profiles: {
+        Alice: {
+          participation_count: 2,
+          top_emotion: "开心语调",
+          primary_behavior: "agreement",
+          interruption_count: 0,
+        },
+      },
+      significant_moments: [
+        {
+          timestamp: [12.3, 16.8],
+          speaker: "Alice",
+          reason: ["urgency", "interruption"],
+          snippet: "我们必须在今天下班前完成。",
+        },
+      ],
+    });
+  });
+
+  test("supports response wrapped by gateway status envelope", () => {
     const payload = {
       status: "success",
-      analysis: {
-        sentiment: "negative",
+      result: {
+        overall_summary: {
+          total_turns: "3",
+          dominant_signals: ["agreement", "neutral"],
+          atmosphere: "Critical/Tense",
+        },
+        speaker_profiles: {},
+        significant_moments: [],
       },
     };
-    expect(extractSentimentLabel(payload)).toBe("negative");
+
+    expect(normalizeSentimentReport(payload)).toEqual({
+      overall_summary: {
+        total_turns: 3,
+        dominant_signals: ["agreement", "neutral"],
+        atmosphere: "Critical/Tense",
+      },
+      speaker_profiles: {},
+      significant_moments: [],
+    });
   });
 
-  test("reads flat payload", () => {
-    const payload = { sentiment: "positive" };
-    expect(extractSentimentLabel(payload)).toBe("positive");
-  });
-
-  test("falls back to neutral for unknown values", () => {
-    const payload = { analysis: { sentiment: "mixed" } };
-    expect(extractSentimentLabel(payload)).toBe("neutral");
+  test("returns null for invalid payload", () => {
+    expect(normalizeSentimentReport({ overall_summary: {} })).toBeNull();
+    expect(normalizeSentimentReport(null)).toBeNull();
   });
 });
 
@@ -91,16 +153,6 @@ describe("deriveKeyPoints", () => {
       "第二点说明",
       "第三点说明",
     ]);
-  });
-});
-
-describe("shouldMarkSentimentStalled", () => {
-  test("marks stalled when enough subtitles arrived with zero sentiment messages", () => {
-    expect(shouldMarkSentimentStalled(6, 0)).toBe(true);
-  });
-
-  test("does not mark stalled when sentiment messages exist", () => {
-    expect(shouldMarkSentimentStalled(10, 1)).toBe(false);
   });
 });
 

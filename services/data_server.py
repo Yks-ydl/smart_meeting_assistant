@@ -6,6 +6,7 @@
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -15,6 +16,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 
+# Keep imports consistent with other service entrypoints when executed as a script.
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from core.vcsum_data import format_transcript, get_participants, load_vcsum_data
 
 app = FastAPI(title="M7 - VCSum Data Service", version="1.0.0")

@@ -1,89 +1,91 @@
 export interface MeetingConfig {
-  meetingId: string
-  language: string
-  translationEnabled: boolean
-  targetLanguage: string
-  sentimentEnabled: boolean
+  meetingId: string;
+  language: string;
+  translationEnabled: boolean;
+  targetLanguage: string;
+  sentimentEnabled: boolean;
 }
 
 export interface MeetingStatus {
-  isRunning: boolean
-  startTime?: string
-  duration: number
-  participantCount: number
+  isRunning: boolean;
+  startTime?: string;
+  duration: number;
+  participantCount: number;
 }
 
 export interface SubtitleEntry {
-  id: string
-  speaker: string
-  text: string
-  translation?: string
-  timestamp: string
-  language: string
+  id: string;
+  speaker: string;
+  text: string;
+  translation?: string;
+  timestamp: string;
+  language: string;
 }
 
 export interface SentimentData {
-  overall: number
-  positive: number
-  negative: number
-  neutral: number
-  engagement: number
-  trend: SentimentTrendPoint[]
+  overall_summary: SentimentOverallSummary;
+  speaker_profiles: Record<string, SentimentSpeakerProfile>;
+  significant_moments: SentimentSignificantMoment[];
 }
 
-export interface SentimentTrendPoint {
-  time: string
-  value: number
+export interface SentimentOverallSummary {
+  total_turns: number;
+  dominant_signals: string[];
+  atmosphere: string;
+}
+
+export interface SentimentSpeakerProfile {
+  participation_count: number;
+  top_emotion: string;
+  primary_behavior: string;
+  interruption_count: number;
+}
+
+export interface SentimentSignificantMoment {
+  timestamp: [number, number] | string;
+  speaker: string;
+  reason: string[];
+  snippet: string;
 }
 
 export interface ActionItem {
-  id: string
-  task: string
-  assignee?: string
-  dueDate?: string
-  priority: 'high' | 'medium' | 'low'
-  status: 'pending' | 'in_progress' | 'completed'
+  id: string;
+  task: string;
+  assignee?: string;
+  dueDate?: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "in_progress" | "completed";
 }
 
 export interface MeetingSummary {
-  id: string
-  meetingId: string
-  title: string
-  summary: string
-  keyPoints: string[]
-  actionItems: ActionItem[]
-  participants: string[]
-  duration: number
-  generatedAt: string
+  id: string;
+  meetingId: string;
+  title: string;
+  summary: string;
+  keyPoints: string[];
+  actionItems: ActionItem[];
+  participants: string[];
+  duration: number;
+  generatedAt: string;
 }
 
 export interface TranslateRequest {
-  text: string
-  sourceLanguage: string
-  targetLanguage: string
+  text: string;
+  sourceLanguage: string;
+  targetLanguage: string;
 }
 
 export interface TranslateResponse {
-  originalText: string
-  translatedText: string
-  sourceLanguage: string
-  targetLanguage: string
-}
-
-export interface SentimentRequest {
-  text: string
-}
-
-export interface SentimentResponse {
-  sentiment: 'positive' | 'negative' | 'neutral'
-  score: number
-  confidence: number
+  originalText: string;
+  translatedText: string;
+  sourceLanguage: string;
+  targetLanguage: string;
 }
 
 export interface ActionItemsRequest {
-  text: string
+  text: string;
 }
 
 export interface ActionItemsResponse {
-  actionItems: ActionItem[]
+  actionItems: ActionItem[];
 }

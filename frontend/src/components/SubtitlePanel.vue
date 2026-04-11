@@ -29,8 +29,12 @@
 
       <div class="empty-state" v-if="subtitles.length === 0">
         <div class="empty-icon">💬</div>
-        <p>等待会议开始...</p>
-        <p class="hint">字幕将在会议开始后实时显示</p>
+        <p v-if="liveError" class="error-text">{{ liveError }}</p>
+        <p v-else-if="isRunning">会议进行中，等待字幕数据...</p>
+        <p v-else>等待会议开始...</p>
+        <p class="hint" v-if="liveError">请检查 M7 数据服务（8006）与网关日志输出</p>
+        <p class="hint" v-else-if="isRunning">请确认数据服务已启动并正在推送字幕流</p>
+        <p class="hint" v-else>字幕将在会议开始后实时显示</p>
       </div>
     </div>
   </div>
@@ -41,7 +45,7 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useMeetingStore } from '../stores/meeting'
 import { resolveSubtitleTranslationDisplay } from '../stores/meetingMessageUtils'
 
-const { subtitles, config } = useMeetingStore()
+const { subtitles, config, isRunning, liveError } = useMeetingStore()
 const containerRef = ref<HTMLElement | null>(null)
 
 const subtitlesWithTranslationState = computed(() =>
@@ -222,6 +226,11 @@ watch(
   font-size: 0.85rem;
   color: var(--text-secondary);
   margin-top: 8px;
+}
+
+.error-text {
+  color: #dc2626;
+  font-weight: 600;
 }
 
 .subtitle-list-enter-active,

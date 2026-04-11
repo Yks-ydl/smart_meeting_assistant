@@ -3,7 +3,6 @@ import type {
   MeetingConfig,
   SubtitleEntry,
   SentimentData,
-  SentimentTrendPoint,
   MeetingSummary,
 } from "../types";
 import { api } from "../services/api";
@@ -11,13 +10,12 @@ import {
   buildActionItems,
   deriveKeyPoints,
   extractAnalysisResultPayloads,
-  extractSentimentLabel,
+  normalizeSentimentReport,
   normalizeTargetLanguage,
-  shouldMarkSentimentStalled,
 } from "./meetingMessageUtils";
 
 type SummaryStatus = "idle" | "loading" | "ready" | "error";
-type SentimentStatus = "idle" | "waiting" | "active" | "stalled";
+type SentimentStatus = "idle" | "waiting" | "ready" | "error";
 
 const isRunning = ref(false);
 const startTime = ref<string | null>(null);
@@ -33,11 +31,10 @@ const config = ref<MeetingConfig>({
 const subtitles = ref<SubtitleEntry[]>([]);
 const currentSentiment = ref<SentimentData | null>(null);
 const summary = ref<MeetingSummary | null>(null);
-const sentimentTrend = ref<SentimentTrendPoint[]>([]);
 const summaryStatus = ref<SummaryStatus>("idle");
 const summaryError = ref<string | null>(null);
 const sentimentStatus = ref<SentimentStatus>("idle");
-const sentimentMessageCount = ref(0);
+const liveError = ref<string | null>(null);
 
 const formattedDuration = computed(() => {
   const hours = Math.floor(duration.value / 3600);
@@ -79,40 +76,14 @@ function applyTranslationPayload(raw: unknown) {
 }
 
 function applySentimentPayload(raw: unknown) {
-  const label = extractSentimentLabel(raw);
-  const pos = label === "positive" ? 0.7 : 0.1;
-  const neg = label === "negative" ? 0.7 : 0.1;
-  const neu = label === "neutral" ? 0.7 : 0.2;
-  const overall = label === "positive" ? 0.75 : label === "negative" ? 0.25 : 0.5;
-
-  sentimentMessageCount.value += 1;
-  sentimentStatus.value = "active";
-
-  sentimentTrend.value.push({
-    time: new Date().toISOString(),
-    value: overall,
-  });
-  if (sentimentTrend.value.length > 30) {
-    sentimentTrend.value = sentimentTrend.value.slice(-30);
+  const report = normalizeSentimentReport(raw);
+  if (!report) {
+    sentimentStatus.value = "error";
+    return;
   }
 
-  currentSentiment.value = {
-    overall,
-    positive: pos,
-    negative: neg,
-    neutral: neu,
-    engagement: 0.6,
-    trend: [...sentimentTrend.value],
-  };
-}
-
-function updateSentimentWaitingState() {
-  if (
-    sentimentStatus.value !== "active" &&
-    shouldMarkSentimentStalled(subtitles.value.length, sentimentMessageCount.value)
-  ) {
-    sentimentStatus.value = "stalled";
-  }
+  currentSentiment.value = report;
+  sentimentStatus.value = "ready";
 }
 
 async function startMeeting(
@@ -128,12 +99,24 @@ async function startMeeting(
 
     clearSubtitles();
     summary.value = null;
-  summaryStatus.value = "idle";
-  summaryError.value = null;
-  sentimentStatus.value = "idle";
+    summaryStatus.value = "idle";
+    summaryError.value = null;
+    sentimentStatus.value = "idle";
+    liveError.value = null;
 
     console.log(`[Meeting] Connecting to gateway...`);
     await api.meeting.connect();
+
+    api.meeting.onError((error) => {
+      console.error("[Meeting] WebSocket error:", error);
+      liveError.value = "网关连接异常，请检查 M5 服务（8000）是否正常。";
+    });
+
+    api.meeting.onClose(() => {
+      if (isRunning.value) {
+        liveError.value = "网关连接已断开，请重新开始会议。";
+      }
+    });
 
     api.meeting.onMessage((message) => {
       const msg = message as { type: string; data: unknown };
@@ -151,8 +134,10 @@ async function startMeeting(
         duration.value = 0;
         summaryStatus.value = "idle";
         summaryError.value = null;
-        sentimentStatus.value = config.value.sentimentEnabled ? "waiting" : "idle";
-        sentimentMessageCount.value = 0;
+        sentimentStatus.value = config.value.sentimentEnabled
+          ? "waiting"
+          : "idle";
+        liveError.value = null;
 
         durationTimer = setInterval(() => {
           duration.value++;
@@ -161,10 +146,10 @@ async function startMeeting(
       } else if (msg.type === "subtitle") {
         const sub = msg.data as SubtitleEntry;
         subtitles.value.push(sub);
+        liveError.value = null;
         if (subtitles.value.length > 50) {
           subtitles.value = subtitles.value.slice(-50);
         }
-        updateSentimentWaitingState();
       } else if (msg.type === "translation") {
         applyTranslationPayload(msg.data);
       } else if (msg.type === "sentiment") {
@@ -178,7 +163,6 @@ async function startMeeting(
           applySentimentPayload(payload.sentimentPayload);
         }
       } else if (msg.type === "stream_complete") {
-        updateSentimentWaitingState();
         console.log(`[Meeting] Stream complete`);
       } else if (msg.type === "meeting_end_report") {
         const reportData = msg.data as {
@@ -193,6 +177,7 @@ async function startMeeting(
               | string
               | Array<{ task: string; assignee?: string; deadline?: string }>;
           };
+          sentiment?: unknown;
         };
 
         const summaryText = reportData.summary.summary || "";
@@ -224,10 +209,16 @@ async function startMeeting(
         };
         summaryStatus.value = "ready";
         summaryError.value = null;
+
+        if (config.value.sentimentEnabled) {
+          applySentimentPayload(reportData.sentiment);
+        }
+
         console.log(`[Meeting] End report received`);
       } else if (msg.type === "error") {
         const errData = msg.data as { message?: string };
         console.error(`[Meeting] Error: ${errData.message}`);
+        liveError.value = errData.message || "实时处理异常";
         if (summaryStatus.value === "loading") {
           summaryStatus.value = "error";
           summaryError.value = errData.message || "会议总结生成失败";
@@ -239,9 +230,11 @@ async function startMeeting(
       mode,
       inputDir,
       normalizeTargetLanguage(config.value.targetLanguage),
+      config.value.sentimentEnabled,
     );
   } catch (error) {
     console.error("Failed to start meeting:", error);
+    liveError.value = "无法连接网关，请确认服务是否启动。";
   }
 }
 
@@ -250,6 +243,7 @@ async function endMeeting() {
     summary.value = null;
     summaryStatus.value = "loading";
     summaryError.value = null;
+    liveError.value = null;
     api.meeting.end();
 
     isRunning.value = false;
@@ -283,9 +277,8 @@ function updateConfig(newConfig: Partial<MeetingConfig>) {
 
 function clearSubtitles() {
   subtitles.value = [];
-  sentimentTrend.value = [];
   currentSentiment.value = null;
-  sentimentMessageCount.value = 0;
+  liveError.value = null;
 }
 
 export function useMeetingStore() {
@@ -299,6 +292,7 @@ export function useMeetingStore() {
     subtitles,
     currentSentiment,
     sentimentStatus,
+    liveError,
     summary,
     summaryStatus,
     summaryError,
