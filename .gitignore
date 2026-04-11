@@ -4,3 +4,6 @@
 experiments/*
 
 __pycache__/
+# Ignore frontend dependencies
+frontend/node_modules/
+node_modules/
