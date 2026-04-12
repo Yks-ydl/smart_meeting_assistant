@@ -5,7 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import asyncio
 import json
+import os
 import uvicorn
+from dataclasses import dataclass
 from pathlib import Path
 
 app = FastAPI(title="M5 - Main Gateway & Orchestrator")
@@ -33,21 +35,95 @@ if frontend_dir.is_dir():
         return FileResponse(str(frontend_dir / "index.html"))
 
 
-# 各微服务的本地地址配置
-SERVICES = {
-    "asr": "http://127.0.0.1:8001/api/v1/asr/transcribe",
-    "summary": "http://127.0.0.1:8002/api/v1/summary/generate",
-    "translation": "http://127.0.0.1:8003/api/v1/translation/translate",
-    "action": "http://127.0.0.1:8003/api/v1/translation/extract_actions",
-    "sentiment": "http://127.0.0.1:8004/api/v1/sentiment/analyze",
-    "audio_start": "http://127.0.0.1:8005/api/v1/audio/start_capture",
-    "audio_stop": "http://127.0.0.1:8005/api/v1/audio/stop_capture",
-    "audio_upload": "http://127.0.0.1:8005/api/v1/audio/upload_multitrack",
-    "audio_status": "http://127.0.0.1:8005/api/v1/audio/status",
-    "audio_tracks": "http://127.0.0.1:8005/api/v1/audio/tracks",
-    "data_status": "http://127.0.0.1:8006/api/v1/data/status",
-    "data_stream": "http://127.0.0.1:8006/api/v1/data/stream",
-}
+def build_service_endpoints() -> dict[str, str]:
+    # Keep service URLs in one place so local and Colab targets share the same mapping logic.
+    return {
+        "asr": "http://127.0.0.1:8001/api/v1/asr/transcribe",
+        "summary": os.getenv(
+            "SUMMARY_SERVICE_URL",
+            "http://127.0.0.1:8002/api/v1/summary/generate",
+        ),
+        "translation": "http://127.0.0.1:8003/api/v1/translation/translate",
+        "action": "http://127.0.0.1:8003/api/v1/translation/extract_actions",
+        "sentiment": "http://127.0.0.1:8004/api/v1/sentiment/analyze",
+        "audio_start": "http://127.0.0.1:8005/api/v1/audio/start_capture",
+        "audio_stop": "http://127.0.0.1:8005/api/v1/audio/stop_capture",
+        "audio_upload": "http://127.0.0.1:8005/api/v1/audio/upload_multitrack",
+        "audio_status": "http://127.0.0.1:8005/api/v1/audio/status",
+        "audio_tracks": "http://127.0.0.1:8005/api/v1/audio/tracks",
+        "data_status": "http://127.0.0.1:8006/api/v1/data/status",
+        "data_stream": "http://127.0.0.1:8006/api/v1/data/stream",
+    }
+
+
+SERVICES = build_service_endpoints()
+
+
+@dataclass
+class SummaryRequestConfig:
+    timeout_sec: float
+    retries: int
+    headers: dict[str, str]
+
+
+def _parse_float(value: str | None, default_value: float) -> float:
+    try:
+        return float(value) if value is not None else default_value
+    except (TypeError, ValueError):
+        return default_value
+
+
+def _parse_int(value: str | None, default_value: int) -> int:
+    try:
+        return int(value) if value is not None else default_value
+    except (TypeError, ValueError):
+        return default_value
+
+
+def build_summary_request_config() -> SummaryRequestConfig:
+    timeout_sec = _parse_float(os.getenv("SUMMARY_REMOTE_TIMEOUT_SEC"), 90.0)
+    retries = max(0, _parse_int(os.getenv("SUMMARY_REMOTE_RETRIES"), 1))
+    auth_header = os.getenv("SUMMARY_REMOTE_AUTH_HEADER", "Authorization").strip()
+    auth_scheme = os.getenv("SUMMARY_REMOTE_AUTH_SCHEME", "Bearer").strip()
+    auth_token = os.getenv("SUMMARY_REMOTE_AUTH_TOKEN", "").strip()
+
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers[auth_header] = (
+            f"{auth_scheme} {auth_token}".strip() if auth_scheme else auth_token
+        )
+
+    return SummaryRequestConfig(timeout_sec=timeout_sec, retries=retries, headers=headers)
+
+
+async def call_summary_service(
+    client: httpx.AsyncClient,
+    summary_url: str,
+    payload: dict,
+    config: SummaryRequestConfig,
+) -> dict:
+    attempts = config.retries + 1
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            response = await client.post(
+                summary_url,
+                json=payload,
+                timeout=config.timeout_sec,
+                headers=config.headers or None,
+            )
+            return response.json()
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            print(
+                f"[Gateway] Summary request failed attempt {attempt}/{attempts} "
+                f"url={summary_url}: {exc}"
+            )
+
+    return {
+        "error": f"summary service request failed after {attempts} attempts: {last_error}"
+    }
 
 
 class ConnectionManager:
@@ -425,9 +501,15 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                     summary_payload = {"session_id": session_id, "text": full_text}
                     action_payload = {"session_id": session_id, "text": full_text}
                     sentiment_payload = sentiment_turns_ref["items"]
+                    summary_config = build_summary_request_config()
 
                     summary_task = asyncio.create_task(
-                        call_service(client, SERVICES["summary"], summary_payload)
+                        call_summary_service(
+                            client=client,
+                            summary_url=SERVICES["summary"],
+                            payload=summary_payload,
+                            config=summary_config,
+                        )
                     )
                     action_task = asyncio.create_task(
                         call_service(client, SERVICES["action"], action_payload)

@@ -139,7 +139,113 @@
 }
 ```
 
+**响应体（本地 M2 与 Colab 远端保持同一契约）：**
+```json
+{
+  "status": "success",
+  "session_id": "会话ID",
+  "summary": "摘要文本",
+  "mode": "hybrid"
+}
+```
+
 ---
+
+## Colab 远端摘要服务（高显存模式）
+
+当 `SUMMARY_EXECUTION_MODE=remote` 时，本地网关不会启动本地 M2，而是将摘要请求转发到 `SUMMARY_SERVICE_URL`。
+
+### 远端服务接口要求
+
+- 路径：`POST /api/v1/summary/generate`
+- 请求体：
+  ```json
+  {
+    "session_id": "会话ID",
+    "text": "完整会议文本"
+  }
+  ```
+- 响应体至少包含：`status`、`session_id`、`summary`、`mode`
+
+### 远端健康检查
+
+- 路径：`GET /health`
+- 示例响应：
+  ```json
+  {
+    "status": "ok",
+    "model_loaded": true,
+    "model_name": "fnlp/bart-base-chinese"
+  }
+  ```
+
+### 远端鉴权
+
+网关可通过下列环境变量为远端摘要请求注入鉴权头：
+
+- `SUMMARY_REMOTE_AUTH_HEADER`（默认 `Authorization`）
+- `SUMMARY_REMOTE_AUTH_SCHEME`（默认 `Bearer`）
+- `SUMMARY_REMOTE_AUTH_TOKEN`
+
+最终请求头格式示例：
+
+```text
+Authorization: Bearer <token>
+```
+
+### 远端调用控制
+
+- `SUMMARY_REMOTE_TIMEOUT_SEC`：单次请求超时（秒）
+- `SUMMARY_REMOTE_RETRIES`：失败重试次数
+
+---
+
+### Colab 快速上手（示例）
+
+下面是把摘要服务部署到 Colab 并通过 ngrok 暴露给本地网关的最小步骤（交互式 Notebook 或直接在 Colab cell 中运行）。
+
+1. 在 Colab 中克隆仓库并进入目录：
+
+```bash
+!git clone https://github.com/<you>/<repo>.git
+%cd repo/smart_meeting_assistant
+```
+
+2. 安装 Colab 运行时依赖：
+
+```bash
+!pip install -r scripts/colab/requirements-colab.txt
+```
+
+3. 设置隧道与服务鉴权（仅在运行时内存中设置，切勿推到公共仓库）：
+
+```python
+import os
+os.environ['NGROK_AUTHTOKEN'] = 'your-ngrok-authtoken'
+os.environ['SUMMARY_REMOTE_AUTH'] = 'a-secure-token-you-generate'
+```
+
+4. 在 Colab 中启动隧道并运行服务（`scripts/colab/colab_entry.py` 会启动 uvicorn 并打印 public URL）：
+
+```bash
+python -u scripts/colab/colab_entry.py
+# 服务启动后会在输出中显示类似：https://<id>.ngrok.io
+```
+
+5. 在本地 `.env`（或环境变量）中设置：
+
+```
+SUMMARY_EXECUTION_MODE=remote
+SUMMARY_SERVICE_URL=https://<id>.ngrok.io/api/v1/summary/generate
+SUMMARY_REMOTE_AUTH_SCHEME=Bearer
+SUMMARY_REMOTE_AUTH_HEADER=Authorization
+SUMMARY_REMOTE_AUTH_TOKEN=<the same a-secure-token-you-generate>
+```
+
+安全提示：
+- `NGROK_AUTHTOKEN` 用于你的 ngrok 帐户授权，允许在 Colab 上建立隧道；它不是应用层访问令牌但也应妥善保管。
+- `SUMMARY_REMOTE_AUTH_TOKEN` 是应用层的 Bearer token，用于授权网关向你的 Colab 服务发起请求；务必保密，不要提交到公共仓库。
+
 
 ## M3 - 翻译 & 待办提取（:8003）
 

@@ -32,6 +32,7 @@
 ## 快速开始
 
 1. **安装依赖**
+
    ```bash
    pip install -r requirements.txt
    ```
@@ -45,6 +46,7 @@
    - `VCSUM_LONG_DATA_PATH`：可选，覆盖 M7 默认 long_train 数据路径
 
 3. **构建前端静态资源（网关托管）**
+
    ```bash
    cd frontend
    npm install
@@ -55,6 +57,58 @@
    ```bash
    python start_all.py
    ```
+
+## Colab 远端摘要部署（高显存场景）
+
+当本地显存不足时，可将摘要推理服务放到 Colab，只保留本地网关和其它微服务。
+
+### 1. 在 Colab 启动摘要服务
+
+在 Colab 中进入项目目录后执行：
+
+```bash
+pip install -r scripts/colab/requirements-colab.txt
+python -m scripts.colab.colab_entry
+```
+
+脚本会输出公网地址，例如：
+
+```text
+[ColabEntry] set SUMMARY_SERVICE_URL to: https://xxxx.ngrok-free.app/api/v1/summary/generate
+```
+
+### 2. 在本地切换到 remote 模式
+
+在本地 `.env` 中设置：
+
+```env
+SUMMARY_EXECUTION_MODE=remote
+SUMMARY_SERVICE_URL=https://xxxx.ngrok-free.app/api/v1/summary/generate
+SUMMARY_REMOTE_AUTH_HEADER=Authorization
+SUMMARY_REMOTE_AUTH_SCHEME=Bearer
+SUMMARY_REMOTE_AUTH_TOKEN=your_colab_token
+SUMMARY_REMOTE_TIMEOUT_SEC=90
+SUMMARY_REMOTE_RETRIES=1
+```
+
+然后本地启动：
+
+```bash
+python start_all.py
+```
+
+此时启动器会跳过本地 M2，网关将把摘要请求转发到 Colab。
+
+### 3. 回切本地摘要模式
+
+将 `.env` 改回：
+
+```env
+SUMMARY_EXECUTION_MODE=local
+SUMMARY_SERVICE_URL=http://127.0.0.1:8002/api/v1/summary/generate
+```
+
+然后重新启动即可恢复本地摘要服务。
 
 ## M6 目录处理示例
 

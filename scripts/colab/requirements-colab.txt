@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+httpx
+transformers
+torch
+sentencepiece
+pyngrok

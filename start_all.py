@@ -10,16 +10,8 @@ def terminate_processes(processes):
             proc.terminate()
 
 
-def start_services():
-    print(" 正在启动智能会议助手微服务集群...")
-
-    # 设置 Hugging Face 国内镜像源，解决模型下载超时问题
-    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-    # 解决 Windows 环境下常见的 OMP 冲突报错 (OMP: Error #15)
-    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-    print("已设置环境变量 HF_ENDPOINT 和 KMP_DUPLICATE_LIB_OK")
-
-    # 定义需要启动的服务列表
+def build_service_catalog() -> list[dict]:
+    # Keep service definition centralized so mode-based filtering does not duplicate service metadata.
     services = [
         {"name": "M1 - ASR Service", "script": "services/asr_server.py", "port": 8001},
         {
@@ -49,6 +41,26 @@ def start_services():
             "port": 8006,
         },
     ]
+
+    summary_mode = os.getenv("SUMMARY_EXECUTION_MODE", "local").strip().lower()
+    if summary_mode == "remote":
+        print("检测到 SUMMARY_EXECUTION_MODE=remote，跳过本地 M2 摘要服务启动。")
+        print(f"当前远端摘要地址: {os.getenv('SUMMARY_SERVICE_URL', '')}")
+        services = [svc for svc in services if svc["script"] != "services/summary_server.py"]
+
+    return services
+
+
+def start_services():
+    print(" 正在启动智能会议助手微服务集群...")
+
+    # 设置 Hugging Face 国内镜像源，解决模型下载超时问题
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+    # 解决 Windows 环境下常见的 OMP 冲突报错 (OMP: Error #15)
+    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    print("已设置环境变量 HF_ENDPOINT 和 KMP_DUPLICATE_LIB_OK")
+
+    services = build_service_catalog()
 
     processes = []
     failed_services = []
