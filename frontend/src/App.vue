@@ -206,7 +206,7 @@ watch(isRunning, (running) => {
 
 .summary-panel-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 2fr 1fr;
   gap: 24px;
   align-items: start;
 }

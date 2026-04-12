@@ -375,7 +375,7 @@ function renderMarkdown(text: string): string {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 300px;
+  min-height: var(--meeting-panel-min-height);
   color: var(--text-muted);
   text-align: center;
 }

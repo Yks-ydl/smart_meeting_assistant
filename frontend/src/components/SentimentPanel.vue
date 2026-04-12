@@ -121,7 +121,7 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   box-shadow: var(--shadow-card);
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  min-height: var(--meeting-panel-min-height);
 }
 
 .panel-header {
@@ -151,6 +151,7 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 12px;
+  min-width: 0;
 }
 
 .metric-label {
@@ -163,6 +164,9 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   margin: 8px 0 0;
   font-size: 1.2rem;
   font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .tone-positive {
@@ -203,7 +207,7 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
 
 .profiles-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -284,7 +288,7 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 220px;
+  min-height: var(--meeting-panel-min-height);
   color: var(--text-muted);
   text-align: center;
 }
@@ -307,6 +311,10 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
 
 @media (max-width: 768px) {
   .overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .profiles-grid {
     grid-template-columns: 1fr;
   }
 }
