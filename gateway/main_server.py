@@ -1,8 +1,7 @@
 import sys
 from pathlib import Path
 
-# Ensure the project root is on sys.path so gateway.* imports work
-# both when this file is run as a script and when imported as a module.
+# Ensure project root is on sys.path so `from gateway.xxx` works when run as a script
 _project_root = str(Path(__file__).resolve().parents[1])
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
@@ -17,6 +16,7 @@ import json
 import os
 import uvicorn
 from dataclasses import dataclass
+from pathlib import Path
 
 from gateway.demo_source import use_vcsum_demo_source
 
@@ -443,12 +443,12 @@ async def stream_audio_directory_data(
 ) -> bool:
     """Bridge M6 batch transcript output into the existing demo subtitle stream contract."""
     audio_payload = build_demo_audio_request(session_id=session_id, input_dir=input_dir)
-    # M6 processes multiple audio files and calls M1 ASR for each; needs a long timeout
+    # M6 sequentially processes multiple audio tracks via M1 ASR; needs long timeout
     audio_result = await call_service(
         client,
         SERVICES["audio_process_directory"],
         audio_payload,
-        timeout=600.0,
+        timeout=1200.0,
     )
 
     if audio_result.get("error"):

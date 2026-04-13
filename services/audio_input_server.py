@@ -24,6 +24,8 @@ from m1_speech.utils.schemas import AudioSource
 app = FastAPI(title="M6 - Audio Input Service")
 
 ASR_SERVICE_URL = os.getenv("ASR_SERVICE_URL", "http://127.0.0.1:8001/api/v1/asr/transcribe")
+# M1 首次调用需加载 Whisper 模型(~484MB)，加上 CPU 推理长音频，单轨需足够超时
+ASR_PER_TRACK_TIMEOUT = float(os.getenv("M6_ASR_TIMEOUT", "300"))
 DEFAULT_AUDIO_GLOB_PATTERN = "*"
 SUPPORTED_AUDIO_SUFFIXES = {".m4a", ".wav", ".mp3", ".flac", ".aac", ".ogg", ".webm"}
 
@@ -119,7 +121,7 @@ async def send_track_to_asr(
         "chunk_start_time": 0.0,
         "audio_format": "wav",
     }
-    response = await client.post(ASR_SERVICE_URL, json=payload, timeout=120.0)
+    response = await client.post(ASR_SERVICE_URL, json=payload, timeout=ASR_PER_TRACK_TIMEOUT)
     return response.json()
 
 
