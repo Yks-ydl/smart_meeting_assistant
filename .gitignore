@@ -6,4 +6,9 @@ experiments/*
 __pycache__/
 # Ignore frontend dependencies
 frontend/node_modules/
+frontend/dist/
 node_modules/
+
+# Ignore build outputs
+dist/
+

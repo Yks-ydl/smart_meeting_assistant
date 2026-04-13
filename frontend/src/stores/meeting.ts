@@ -57,22 +57,22 @@ let durationTimer: ReturnType<typeof setInterval> | null = null;
 
 function applyTranslationPayload(raw: unknown) {
   const transData = raw as { subtitle_id?: string; translated_text?: string };
-  if (!transData?.translated_text || subtitles.value.length === 0) {
+  if (
+    !transData?.translated_text ||
+    !transData.subtitle_id ||
+    subtitles.value.length === 0
+  ) {
     return;
   }
 
-  if (transData.subtitle_id) {
-    const targetIndex = subtitles.value.findIndex(
-      (sub) => sub.id === transData.subtitle_id,
-    );
-    if (targetIndex >= 0) {
-      subtitles.value[targetIndex].translation = transData.translated_text;
-      return;
-    }
+  const targetIndex = subtitles.value.findIndex(
+    (sub) => sub.id === transData.subtitle_id,
+  );
+  if (targetIndex < 0) {
+    return;
   }
 
-  const lastSub = subtitles.value[subtitles.value.length - 1];
-  lastSub.translation = transData.translated_text;
+  subtitles.value[targetIndex].translation = transData.translated_text;
 }
 
 function applySentimentPayload(raw: unknown) {
@@ -147,9 +147,6 @@ async function startMeeting(
         const sub = msg.data as SubtitleEntry;
         subtitles.value.push(sub);
         liveError.value = null;
-        if (subtitles.value.length > 50) {
-          subtitles.value = subtitles.value.slice(-50);
-        }
       } else if (msg.type === "translation") {
         applyTranslationPayload(msg.data);
       } else if (msg.type === "sentiment") {

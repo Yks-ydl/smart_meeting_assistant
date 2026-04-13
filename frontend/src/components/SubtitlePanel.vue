@@ -8,26 +8,37 @@
     </div>
 
     <div class="subtitle-container" ref="containerRef">
-      <TransitionGroup name="subtitle-list" tag="div" class="subtitle-list">
-        <div v-for="subtitle in subtitlesWithTranslationState" :key="subtitle.id" class="subtitle-item">
-          <div class="subtitle-meta">
-            <span class="speaker">{{ subtitle.speaker }}</span>
-            <span class="time">{{ formatTime(subtitle.timestamp) }}</span>
-          </div>
-          <div class="subtitle-content">
-            <p class="original-text">{{ subtitle.text }}</p>
-            <p
-              class="translated-text"
-              :class="{ pending: subtitle.translationDisplay.pending }"
-              v-if="subtitle.translationDisplay.text"
-            >
-              {{ subtitle.translationDisplay.text }}
-            </p>
+      <div v-if="subtitles.length > 0" class="subtitle-list-shell">
+        <div class="subtitle-list" :style="{ height: `${totalSize}px` }">
+          <div
+            v-for="entry in virtualRows"
+            :key="entry.subtitle.id"
+            :data-index="entry.virtualRow.index"
+            :ref="measureSubtitleElement"
+            class="subtitle-item-wrapper"
+            :style="{ transform: `translateY(${entry.virtualRow.start}px)` }"
+          >
+            <div class="subtitle-item">
+              <div class="subtitle-meta">
+                <span class="speaker">{{ entry.subtitle.speaker }}</span>
+                <span class="time">{{ formatTime(entry.subtitle.timestamp) }}</span>
+              </div>
+              <div class="subtitle-content">
+                <p class="original-text">{{ entry.subtitle.text }}</p>
+                <p
+                  v-if="entry.subtitle.translationDisplay.text"
+                  class="translated-text"
+                  :class="{ pending: entry.subtitle.translationDisplay.pending }"
+                >
+                  {{ entry.subtitle.translationDisplay.text }}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
-      </TransitionGroup>
+      </div>
 
-      <div class="empty-state" v-if="subtitles.length === 0">
+      <div v-else class="empty-state">
         <div class="empty-icon">💬</div>
         <p v-if="liveError" class="error-text">{{ liveError }}</p>
         <p v-else-if="isRunning">会议进行中，等待字幕数据...</p>
@@ -41,16 +52,36 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, nextTick, ref, watch, type ComponentPublicInstance } from 'vue'
+import { useVirtualizer, type VirtualItem } from '@tanstack/vue-virtual'
 import { useMeetingStore } from '../stores/meeting'
 import { resolveSubtitleTranslationDisplay } from '../stores/meetingMessageUtils'
 
 const { subtitles, config, isRunning, liveError } = useMeetingStore()
-const containerRef = ref<HTMLElement | null>(null)
+const containerRef = ref<HTMLDivElement | null>(null)
 
-const subtitlesWithTranslationState = computed(() =>
+type SubtitleWithTranslationState = {
+  id: string
+  speaker: string
+  text: string
+  timestamp: string
+  translationDisplay: {
+    text: string | null
+    pending: boolean
+  }
+}
+
+type VirtualSubtitleRow = {
+  virtualRow: VirtualItem
+  subtitle: SubtitleWithTranslationState
+}
+
+const subtitlesWithTranslationState = computed<SubtitleWithTranslationState[]>(() =>
   subtitles.value.map((subtitle) => ({
-    ...subtitle,
+    id: subtitle.id,
+    speaker: subtitle.speaker,
+    text: subtitle.text,
+    timestamp: subtitle.timestamp,
     translationDisplay: resolveSubtitleTranslationDisplay(
       config.value.translationEnabled,
       subtitle.translation,
@@ -58,8 +89,69 @@ const subtitlesWithTranslationState = computed(() =>
   })),
 )
 
+// Keep the full subtitle history rendered efficiently instead of truncating old items.
+const rowVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>(
+  computed(() => ({
+    count: subtitlesWithTranslationState.value.length,
+    getScrollElement: () => containerRef.value,
+    estimateSize: () => 132,
+    overscan: 5,
+    gap: 12,
+    getItemKey: (index: number) =>
+      subtitlesWithTranslationState.value[index]?.id ?? `subtitle-${index}`,
+  })),
+)
+
+const virtualRows = computed<VirtualSubtitleRow[]>(() =>
+  rowVirtualizer.value.getVirtualItems().reduce<VirtualSubtitleRow[]>((rows, virtualRow) => {
+    const subtitle = subtitlesWithTranslationState.value[virtualRow.index]
+    if (subtitle) {
+      rows.push({ virtualRow, subtitle })
+    }
+    return rows
+  }, []),
+)
+
+const totalSize = computed(() => rowVirtualizer.value.getTotalSize())
+
+function measureSubtitleElement(
+  element: Element | ComponentPublicInstance | null,
+) {
+  if (element instanceof Element) {
+    rowVirtualizer.value.measureElement(element as HTMLDivElement)
+  }
+}
+
+function formatAudioSeconds(rawTimestamp: string): string | null {
+  const totalSeconds = Number(rawTimestamp)
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
+    return null
+  }
+
+  const totalMilliseconds = Math.round(totalSeconds * 1000)
+  const hours = Math.floor(totalMilliseconds / 3_600_000)
+  const minutes = Math.floor((totalMilliseconds % 3_600_000) / 60_000)
+  const seconds = Math.floor((totalMilliseconds % 60_000) / 1000)
+  const milliseconds = totalMilliseconds % 1000
+  const baseTime = hours > 0
+    ? `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+    : `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+
+  return `${baseTime}.${milliseconds.toString().padStart(3, '0')}`
+}
+
 function formatTime(timestamp: string): string {
+  // Audio-first mode sends floating-point seconds, while VCSum keeps ISO timestamps.
+  const audioTime = formatAudioSeconds(timestamp.trim())
+  if (audioTime) {
+    return audioTime
+  }
+
   const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) {
+    return '时间未知'
+  }
+
   return date.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
@@ -69,12 +161,14 @@ function formatTime(timestamp: string): string {
 
 watch(
   () => subtitles.value.length,
-  async () => {
-    await nextTick()
-    if (containerRef.value) {
-      containerRef.value.scrollTop = containerRef.value.scrollHeight
+  async (count) => {
+    if (count === 0) {
+      return
     }
-  }
+
+    await nextTick()
+    rowVirtualizer.value.scrollToIndex(count - 1, { align: 'end' })
+  },
 )
 </script>
 
@@ -119,20 +213,27 @@ watch(
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
-  /* Firefox */
   -ms-overflow-style: none;
-  /* IE and Edge */
 }
 
 .subtitle-container::-webkit-scrollbar {
   display: none;
-  /* Chrome, Safari and Opera */
+}
+
+.subtitle-list-shell {
+  min-height: 100%;
 }
 
 .subtitle-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  position: relative;
+  width: 100%;
+}
+
+.subtitle-item-wrapper {
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: 100%;
 }
 
 .subtitle-item {
@@ -140,19 +241,6 @@ watch(
   border-radius: 12px;
   padding: 16px;
   border-left: 3px solid var(--primary);
-  animation: slideIn 0.3s ease;
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateX(-20px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
 }
 
 .subtitle-meta {
@@ -231,20 +319,5 @@ watch(
 .error-text {
   color: #dc2626;
   font-weight: 600;
-}
-
-.subtitle-list-enter-active,
-.subtitle-list-leave-active {
-  transition: all 0.3s ease;
-}
-
-.subtitle-list-enter-from {
-  opacity: 0;
-  transform: translateX(-30px);
-}
-
-.subtitle-list-leave-to {
-  opacity: 0;
-  transform: translateX(30px);
 }
 </style>
