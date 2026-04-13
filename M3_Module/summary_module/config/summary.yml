@@ -1,0 +1,21 @@
+mode: "local"  # api | local
+
+api:
+  service: "siliconflow"  # siliconflow | custom
+  api_url: "https://api.siliconflow.cn/v1/chat/completions"
+  api_key: "${SUMMARY_API_KEY}"
+  auth_header: "Authorization"
+  key_prefix: "Bearer"
+  timeout: 20.0
+  model: "Qwen/Qwen2.5-7B-Instruct"
+  temperature: 0.2
+  max_tokens: 512
+  text_field: "text"
+  response_text_path: "text"
+
+local:
+  backend: "hf_seq2seq"       # mock | hf_seq2seq | hf_causal
+  model_name_or_path: "fnlp/bart-base-chinese"  # 小型中文Seq2Seq模型，加载更稳定
+  device: "auto"              # auto | cpu | cuda | mps
+  max_new_tokens: 80
+  temperature: 0.0

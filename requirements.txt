@@ -1,0 +1,24 @@
+fastapi
+uvicorn
+pydantic
+openai
+requests
+python-dotenv
+websockets
+PyYAML
+faster-whisper
+numpy
+torchaudio
+librosa
+torchcodec
+# M2 混合摘要新增依赖
+transformers
+torch
+rouge-chinese
+jieba
+sentencepiece
+# M6 音频输入服务新增依赖
+sounddevice
+soundfile
+scipy
+httpx

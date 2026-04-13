@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 会议智能分析平台</title>
+    <!-- 引入 Tailwind CSS 替代手写样式，大幅精简代码 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-8 font-sans">
+    <div class="max-w-5xl mx-auto">
+        <!-- 头部与健康检查 -->
+        <div class="bg-white rounded-xl shadow-md p-6 mb-6 flex justify-between items-center border-t-4 border-blue-600">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800">🎙️ AI 会议智能分析平台</h1>
+                <p class="text-gray-500 mt-2 text-sm">统一网关 (Gateway) 驱动的智能调度前端</p>
+            </div>
+            <div class="text-right">
+                <button onclick="checkHealth()" class="text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded border transition">🔄 刷新服务状态</button>
+                <div id="health-status" class="mt-2 text-xs text-gray-500">检测中...</div>
+            </div>
+        </div>
+
+        <!-- 主操作区 -->
+        <div class="bg-white rounded-xl shadow-md p-6 mb-6">
+            <!-- 模式切换 Tab -->
+            <div class="flex border-b mb-6 overflow-x-auto whitespace-nowrap">
+                <button id="tab-folder" onclick="switchTab('folder')" class="px-6 py-3 font-semibold text-blue-600 border-b-2 border-blue-600 transition shrink-0">📁 目录批量处理 (全链路)</button>
+                <button id="tab-single" onclick="switchTab('single')" class="px-6 py-3 font-semibold text-gray-500 hover:text-blue-500 transition shrink-0">🎵 单文件快速转录 (仅识别)</button>
+                <button id="tab-stream" onclick="switchTab('stream')" class="px-6 py-3 font-semibold text-gray-500 hover:text-blue-500 transition shrink-0">📡 实时流式模拟 (每5秒切片)</button>
+            </div>
+
+            <!-- 模式 1: 文件夹处理 (对应 pipeline/full) -->
+            <div id="mode-folder" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">音频文件夹路径 (服务器绝对路径)</label>
+                        <input type="text" id="input_dir" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2 focus:ring-blue-500 focus:border-blue-500" placeholder="例如: D:/recordings/meeting1">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">文件匹配模式</label>
+                        <input type="text" id="glob_pattern" value="*.m4a" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">目标翻译语言</label>
+                        <select id="target_lang" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2">
+                            <option value="">默认 English</option>
+                            <option value="en">英文 (English)</option>
+                            <option value="zh">中文 (Chinese)</option>
+                            <option value="ja">日文 (Japanese)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">自定义会话 ID (可选)</label>
+                        <input type="text" id="session_id" placeholder="留空则自动生成" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2">
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <label class="flex items-center gap-2 text-sm text-gray-700"><input id="enable_translation" type="checkbox" checked> 开启翻译模式</label>
+                    <label class="flex items-center gap-2 text-sm text-gray-700"><input id="enable_actions" type="checkbox" checked> 开启待办提取</label>
+                    <label class="flex items-center gap-2 text-sm text-gray-700"><input id="enable_sentiment" type="checkbox" checked> 开启情感分析</label>
+                </div>
+                <button onclick="processFolder()" class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 font-medium transition shadow-sm">🚀 开始全链路智能分析</button>
+            </div>
+
+            <!-- 模式 2: 单文件快速转录 (对应 v1/asr/transcribe) -->
+            <div id="mode-single" class="space-y-4 hidden">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">选择本地音频文件</label>
+                        <input type="file" id="audio_file" accept="audio/*" class="mt-1 block w-full border border-gray-300 p-1.5 rounded-md">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">说话人标识 (可选)</label>
+                        <input type="text" id="speaker_hint" placeholder="例如: Alice" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2">
+                    </div>
+                </div>
+                <button onclick="processSingle()" class="bg-green-600 text-white px-6 py-2 rounded-md hover:bg-green-700 font-medium transition shadow-sm">⚡ 仅执行快速转录</button>
+            </div>
+
+            <!-- 模式 3: 流式实时模拟 (对应 ws/meeting) -->
+            <div id="mode-stream" class="space-y-4 hidden">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">选择本地音频文件</label>
+                        <input type="file" id="stream_audio_file" accept="audio/*" class="mt-1 block w-full border border-gray-300 p-1.5 rounded-md">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">目标翻译语言</label>
+                        <select id="stream_target_lang" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2">
+                            <option value="en">英文 (English)</option>
+                            <option value="zh">中文 (Chinese)</option>
+                            <option value="ja">日文 (Japanese)</option>
+                        </select>
+                    </div>
+                </div>
+                <button onclick="processStream()" class="bg-purple-600 text-white px-6 py-2 rounded-md hover:bg-purple-700 font-medium transition shadow-sm">📡 开始流式会议模拟</button>
+            </div>
+
+            <!-- 状态提示 -->
+            <div id="loading" class="hidden mt-6 text-center py-8 bg-gray-50 rounded-lg border border-gray-100">
+                <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-gray-200 border-t-blue-600 mb-3"></div>
+                <p class="text-gray-600 font-medium" id="loading-text">正在处理中，这可能需要几分钟时间...</p>
+            </div>
+            <div id="error-box" class="hidden mt-6 bg-red-50 border-l-4 border-red-500 p-4 text-red-700 rounded shadow-sm"></div>
+        </div>
+
+        <!-- 结果展示区 -->
+        <div id="results" class="hidden space-y-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- 转录模块 -->
+                <div class="bg-white rounded-xl shadow-md p-6 col-span-1 md:col-span-2">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex items-center">📝 <span class="ml-2">会议转录 (Transcript)</span></h2>
+                    <div id="res-transcript" class="space-y-3 max-h-[500px] overflow-y-auto p-2"></div>
+                </div>
+                
+                <!-- 摘要模块 -->
+                <div id="container-summary" class="bg-white rounded-xl shadow-md p-6">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex items-center">📋 <span class="ml-2">会议摘要 (Summary)</span></h2>
+                    <div id="res-summary" class="text-gray-700 whitespace-pre-wrap leading-relaxed"></div>
+                </div>
+
+                <!-- 待办模块 -->
+                <div id="container-actions" class="bg-white rounded-xl shadow-md p-6">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex items-center">✅ <span class="ml-2">待办事项 (Action Items)</span></h2>
+                    <ul id="res-actions" class="space-y-2 text-gray-700 max-h-[300px] overflow-y-auto p-1"></ul>
+                </div>
+
+                <!-- 翻译模块 -->
+                <div id="container-translation" class="bg-white rounded-xl shadow-md p-6">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex items-center">🌐 <span class="ml-2">多语翻译 (Translation)</span></h2>
+                    <div id="res-translation" class="text-gray-700 whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto p-1"></div>
+                </div>
+
+                <!-- 情感分析模块 -->
+                <div id="container-sentiment" class="bg-white rounded-xl shadow-md p-6 col-span-1 md:col-span-2">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex items-center">🎭 <span class="ml-2">情感分析 (Sentiment)</span></h2>
+                    <div id="res-sentiment" class="space-y-2 text-gray-700 max-h-[300px] overflow-y-auto p-1"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 自动适配 API 地址：如果是在网关服务打开，则使用同源 origin；如果是本地双击 html 打开，则强制指向 8000
+        const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000' : window.location.origin;
+
+        // UI 状态切换
+        function switchTab(tab) {
+            document.getElementById('mode-folder').classList.toggle('hidden', tab !== 'folder');
+            document.getElementById('mode-single').classList.toggle('hidden', tab !== 'single');
+            document.getElementById('mode-stream').classList.toggle('hidden', tab !== 'stream');
+            
+            const activeClass = "px-6 py-3 font-semibold text-blue-600 border-b-2 border-blue-600 transition shrink-0";
+            const inactiveClass = "px-6 py-3 font-semibold text-gray-500 hover:text-blue-500 transition shrink-0";
+            
+            document.getElementById('tab-folder').className = tab === 'folder' ? activeClass : inactiveClass;
+            document.getElementById('tab-single').className = tab === 'single' ? activeClass : inactiveClass;
+            document.getElementById('tab-stream').className = tab === 'stream' ? activeClass : inactiveClass;
+        }
+
+        function showLoading(text) {
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('loading-text').innerText = text;
+            document.getElementById('error-box').classList.add('hidden');
+            document.getElementById('results').classList.add('hidden');
+        }
+
+        function hideLoading() { document.getElementById('loading').classList.add('hidden'); }
+        function showError(msg) {
+            hideLoading();
+            const errBox = document.getElementById('error-box');
+            errBox.innerText = msg;
+            errBox.classList.remove('hidden');
+        }
+
+        // 调用 Gateway 的健康检查
+        async function checkHealth() {
+            const statusDiv = document.getElementById('health-status');
+            statusDiv.innerText = "正在检查微服务状态...";
+            try {
+                const res = await fetch(`${API_BASE}/health/all`);
+                const data = await res.json();
+                if(data.status === 'ok') {
+                    let html = "";
+                    for(const [name, info] of Object.entries(data.services)) {
+                        const isOk = info.status === 'ok';
+                        html += `<span class="mr-3 ${isOk ? 'text-green-600 font-medium' : 'text-red-600'}">${name}: ${isOk?'🟢':'🔴'}</span>`;
+                    }
+                    statusDiv.innerHTML = html;
+                }
+            } catch(e) {
+                statusDiv.innerText = "🔴 Gateway 连接失败，请检查服务是否启动";
+            }
+        }
+        checkHealth();
+
+        // 格式化秒数为 MM:SS
+        function formatTime(sec) {
+            const m = Math.floor(sec / 60);
+            const s = Math.floor(sec % 60);
+            return `${m}:${s.toString().padStart(2, '0')}`;
+        }
+
+        // 渲染对话轴
+        function renderTranscript(segments) {
+            const box = document.getElementById('res-transcript');
+            box.innerHTML = '';
+            if(!segments || segments.length === 0) {
+                box.innerHTML = '<p class="text-gray-500 italic">未能提取到任何语音内容。</p>';
+                return;
+            }
+            segments.forEach(seg => {
+                const start = seg.start_time ?? seg.start ?? 0;
+                const end = seg.end_time ?? seg.end ?? 0;
+                const speaker = seg.speaker_label ?? seg.speaker ?? '未知说话人';
+                const text = seg.corrected_text ?? seg.text ?? '';
+                
+                const div = document.createElement('div');
+                div.className = "p-4 bg-gray-50 rounded-lg border-l-4 border-blue-500 hover:bg-gray-100 transition";
+                div.innerHTML = `
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="font-bold text-sm text-blue-700 bg-blue-100 px-2 py-0.5 rounded">${speaker}</span>
+                        <span class="text-xs text-gray-500 font-mono">${formatTime(start)} - ${formatTime(end)}</span>
+                    </div>
+                    <p class="text-gray-800">${text}</p>
+                `;
+                box.appendChild(div);
+            });
+        }
+
+        // --- 核心逻辑 1：全链路批量处理 (WebSocket 流式回放) ---
+        async function processFolder() {
+            const inputDir = document.getElementById('input_dir').value.trim();
+            if(!inputDir) return showError('请必须输入音频文件夹路径！');
+            
+            showLoading("📡 正在连接 Gateway 建立目录处理流...");
+            
+            try {
+                const req = {
+                    session_id: document.getElementById('session_id').value.trim() || `session-${Date.now()}`,
+                    input_dir: inputDir,
+                    glob_pattern: document.getElementById('glob_pattern').value.trim() || "*.m4a",
+                    target_lang: document.getElementById('target_lang').value || 'en',
+                    enable_translation: document.getElementById('enable_translation')?.checked ?? true,
+                    enable_actions: document.getElementById('enable_actions')?.checked ?? true,
+                    enable_sentiment: document.getElementById('enable_sentiment')?.checked ?? true
+                };
+
+                const ws = new WebSocket(`${API_BASE.replace(/^http/, 'ws')}/ws/pipeline/dir`);
+                
+                ws.onopen = () => {
+                    ws.send(JSON.stringify(req));
+                    hideLoading();
+                    document.getElementById('results').classList.remove('hidden');
+                    document.getElementById('container-summary').classList.remove('hidden');
+                    document.getElementById('container-actions').classList.toggle('hidden', !req.enable_actions);
+                    document.getElementById('container-translation').classList.toggle('hidden', !req.enable_translation);
+                    document.getElementById('container-sentiment').classList.toggle('hidden', !req.enable_sentiment);
+                    
+                    document.getElementById('res-transcript').innerHTML = '';
+                    document.getElementById('res-translation').innerHTML = '';
+                    document.getElementById('res-actions').innerHTML = '';
+                    document.getElementById('res-sentiment').innerHTML = '';
+                    document.getElementById('res-summary').innerText = '等待 Gateway 处理...';
+                };
+
+                ws.onmessage = (e) => {
+                    const msg = JSON.parse(e.data);
+                    console.log("[目录流式收到消息]", msg.type, msg);
+                    
+                    if (msg.type === "info") {
+                        document.getElementById('res-summary').innerText = msg.message;
+                    } else if (msg.type === "error") {
+                        showError(msg.message);
+                        ws.close();
+                    } else if (msg.type === "asr_result") {
+                        let text = msg.data.corrected_text || msg.data.text;
+                        if (typeof text === 'object') text = JSON.stringify(text);
+                        if (text && typeof text === 'string' && text.trim()) {
+                            const speaker = msg.data.speaker || 'Unknown';
+                            const transcriptHtml = `<div class="p-3 bg-blue-50 rounded-lg border-l-4 border-blue-500 mb-2 text-sm text-gray-800"><span class="font-bold text-blue-700 mr-2">[${formatTime(msg.data.start_time||0)} - ${formatTime(msg.data.end_time||0)}] ${speaker}:</span>${text}</div>`;
+                            document.getElementById('res-transcript').insertAdjacentHTML('beforeend', transcriptHtml);
+                            const tBox = document.getElementById('res-transcript').parentElement;
+                            tBox.scrollTop = tBox.scrollHeight;
+                        }
+                    } else if (msg.type === "analysis_result") {
+                        if (!req.enable_translation && !req.enable_sentiment) return;
+                        // Translation
+                        let transObj = msg.data.translation;
+                        let trans = typeof transObj === 'string' ? transObj : (transObj?.translation || transObj?.text || transObj?.data || transObj?.result);
+                        if (!trans && transObj?.error) trans = `[翻译失败: ${transObj.error}]`;
+                        if (!trans && transObj) trans = transObj;
+                        if (typeof trans === 'object') trans = JSON.stringify(trans);
+
+                        if (req.enable_translation && trans && typeof trans === 'string' && trans.trim() && trans !== "{}") {
+                            document.getElementById('res-translation').insertAdjacentHTML('beforeend', `<div class="p-2 bg-purple-50 rounded border-l-4 border-purple-500 mb-2 text-sm text-gray-700">${trans}</div>`);
+                            const tBox = document.getElementById('res-translation');
+                            tBox.scrollTop = tBox.scrollHeight;
+                        }
+
+                        // Sentiment
+                        let sentObj = msg.data.sentiment;
+                        let sent = typeof sentObj === 'string' ? sentObj : (sentObj?.sentiment || sentObj?.label || sentObj?.text || sentObj?.data || sentObj?.result);
+                        if (!sent && sentObj?.error) sent = `[情感分析失败: ${sentObj.error}]`;
+                        if (!sent && sentObj) sent = sentObj;
+                        if (typeof sent === 'object') sent = JSON.stringify(sent);
+
+                        if (req.enable_sentiment && sent && typeof sent === 'string' && sent.trim() && sent !== "{}") {
+                            let emoji = "🎭";
+                            if (sent.toLowerCase().includes("pos")) emoji = "😊";
+                            else if (sent.toLowerCase().includes("neg")) emoji = "😠";
+                            else if (sent.toLowerCase().includes("neu")) emoji = "😐";
+                            document.getElementById('res-sentiment').insertAdjacentHTML('beforeend', `<div class="p-2 bg-pink-50 rounded border-l-4 border-pink-500 mb-2 text-sm text-gray-700">${emoji} ${sent}</div>`);
+                            const sBox = document.getElementById('res-sentiment');
+                            sBox.scrollTop = sBox.scrollHeight;
+                        }
+                    } else if (msg.type === "action_result") {
+                        if (!req.enable_actions) return;
+                        if (!req.enable_actions) {
+                            ws.close();
+                            return;
+                        }
+                        let actObj = msg.data.actions;
+                        let actions = typeof actObj === 'string' ? actObj : (actObj?.actions || actObj?.action_items || actObj?.data || actObj?.result || []);
+                        if (typeof actions === 'string') actions = actions.split('\n').filter(l => l.trim() !== '');
+                        if (!Array.isArray(actions)) actions = [JSON.stringify(actions)];
+
+                        if (req.enable_actions && actions.length > 0 && actions[0] !== "[]" && actions[0] !== "{}") {
+                            const start = formatTime(msg.data.window_start || 0);
+                            const end = formatTime(msg.data.window_end || 0);
+                            actions.forEach(a => {
+                                if (typeof a === 'object') a = JSON.stringify(a);
+                                document.getElementById('res-actions').insertAdjacentHTML('beforeend', `<li class="flex items-start text-sm mb-1"><span class="text-green-500 mr-2">✔️</span>[${start} - ${end}] ${a}</li>`);
+                            });
+                        }
+                    } else if (msg.type === "meeting_end_report") {
+                        // Summary
+                        document.getElementById('res-summary').innerText = msg.data.summary?.summary || msg.data.summary?.text || '无';
+                        
+                        // Final global actions
+                        let actObj = msg.data.actions;
+                        let actions = typeof actObj === 'string' ? actObj : (actObj?.actions || actObj?.action_items || actObj?.data || actObj?.result || []);
+                        if (typeof actions === 'string') actions = actions.split('\n').filter(l => l.trim() !== '');
+                        if (!Array.isArray(actions)) actions = [JSON.stringify(actions)];
+
+                        if (actions.length > 0 && actions[0] !== "[]" && actions[0] !== "{}") {
+                            actions.forEach(a => {
+                                if (typeof a === 'object') a = JSON.stringify(a);
+                                document.getElementById('res-actions').insertAdjacentHTML('beforeend', `<li class="flex items-start text-sm mb-1 text-blue-700"><span class="text-blue-500 mr-2">📌</span>[全局] ${a}</li>`);
+                            });
+                        } else if (!document.getElementById('res-actions').innerHTML.trim()) {
+                            document.getElementById('res-actions').innerHTML = '<li class="text-gray-500 italic">未提取到待办事项</li>';
+                        }
+                        
+                        ws.close();
+                    }
+                };
+                
+                ws.onerror = () => showError("WebSocket 连接发生异常，请检查终端！");
+                
+            } catch(e) {
+                showError(`全链路处理异常: ${e.message}`);
+            }
+        }
+
+    </script>
+</body>
+</html>
