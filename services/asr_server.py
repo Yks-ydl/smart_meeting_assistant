@@ -2,10 +2,25 @@ from __future__ import annotations
 
 import os
 import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
+
+# 加载 .env 文件中的环境变量
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).parent.parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+        print(f"✅ 已加载环境变量文件: {env_path}")
+        print(f"   M1_DEVICE = {os.getenv('M1_DEVICE', 'cpu')}")
+        print(f"   M1_COMPUTE_TYPE = {os.getenv('M1_COMPUTE_TYPE', 'int8')}")
+        print(f"   M1_MODEL_SIZE_OR_PATH = {os.getenv('M1_MODEL_SIZE_OR_PATH', 'small')}")
+except ImportError:
+    print("⚠️  未安装 python-dotenv，跳过 .env 文件加载")
 
 # 解决 Windows 环境下常见的 OMP 冲突报错
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -15,7 +30,45 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from m1_speech.service import SingleTrackSpeechService
 from m1_speech.utils.config import ASRConfig, InputConfig, PipelineConfig, PostProcessConfig, SpeakerConfig, VADConfig
 
-app = FastAPI(title="M1 - ASR & Speech Processing Service")
+speech_service = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """服务生命周期管理：启动时预加载模型，关闭时清理资源"""
+    global speech_service
+
+    print("=" * 60)
+    print("🔄 正在预加载 ASR 模型...")
+    print("=" * 60)
+
+    config = build_pipeline_config()
+    print(f"📋 配置信息:")
+    print(f"   模型大小: {config.asr.model_size}")
+    print(f"   目标设备: {config.asr.device}")
+    print(f"   计算类型: {config.asr.compute_type}")
+    print(f"   采样率: {config.asr.sample_rate} Hz")
+    print(f"   Beam Size: {config.asr.beam_size}")
+
+    speech_service = SingleTrackSpeechService(config)
+
+    print(f"\n🚀 开始加载模型到 {config.asr.device.upper()} ...")
+    speech_service.transcriber._get_model()
+
+    print("=" * 60)
+    print("✅ ASR 模型加载完成！")
+    print(f"💾 模型已加载到: {config.asr.device.upper()}")
+    print("=" * 60)
+
+    yield
+
+    print("🔄 正在清理资源...")
+
+
+app = FastAPI(
+    title="M1 - ASR & Speech Processing Service",
+    lifespan=lifespan
+)
 
 
 def build_pipeline_config() -> PipelineConfig:
@@ -46,9 +99,6 @@ def build_pipeline_config() -> PipelineConfig:
         postprocess=PostProcessConfig(enabled=True),
         input=InputConfig(glob_pattern="*.wav", recursive=False),
     )
-
-
-speech_service = SingleTrackSpeechService(build_pipeline_config())
 
 
 class AudioData(BaseModel):
