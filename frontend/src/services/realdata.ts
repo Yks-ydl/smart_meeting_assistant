@@ -5,7 +5,7 @@ type ConnectionHandler = () => void;
 
 /**
  * 真实数据 WebSocket 服务
- * 通过 SSE (Server-Sent Events) 从后端获取 VCSum 数据集的真实字幕
+ * 通过 SSE (Server-Sent Events) 从后端获取演示字幕流
  * 替代原有的 MockWebSocketService
  */
 class RealDataService {
@@ -42,14 +42,14 @@ class RealDataService {
   }
 
   /**
-   * 开始从后端接收 VCSum 真实字幕流
+   * 开始从后端接收演示字幕流
    * 使用 SSE 连接到 /api/v1/meeting/subtitles/stream
    */
   startStreaming(): void {
     if (!this.isConnected || this.eventSource) return;
 
     console.log("[RealDataService] 🔗 正在连接后端 SSE 接口...");
-    console.log("[RealDataService] 📊 数据来源：VCSum 数据集");
+    console.log("[RealDataService] 📊 数据来源：演示字幕流（旧版 VCSum 回退模式）");
 
     // 创建 EventSource 连接后端 SSE 接口
     this.eventSource = new EventSource("/api/v1/meeting/subtitles/stream");
@@ -94,7 +94,7 @@ class RealDataService {
             subtitle.text.length > 50
               ? subtitle.text.substring(0, 50) + "..."
               : subtitle.text;
-          console.log(`[VCSum] ${subtitle.speaker}: ${textPreview}`);
+          console.log(`[DemoSSE] ${subtitle.speaker}: ${textPreview}`);
         } else if (message.type === "stream_complete") {
           console.log(
             `[RealDataService] ✅ 字幕流推送完成，共 ${message.data.totalSentences} 条`,

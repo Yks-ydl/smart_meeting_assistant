@@ -3,6 +3,8 @@ import time
 import sys
 import os
 
+from gateway.demo_source import use_vcsum_demo_source
+
 
 def terminate_processes(processes):
     for proc in processes:
@@ -10,16 +12,8 @@ def terminate_processes(processes):
             proc.terminate()
 
 
-def start_services():
-    print(" 正在启动智能会议助手微服务集群...")
-
-    # 设置 Hugging Face 国内镜像源，解决模型下载超时问题
-    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-    # 解决 Windows 环境下常见的 OMP 冲突报错 (OMP: Error #15)
-    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-    print("已设置环境变量 HF_ENDPOINT 和 KMP_DUPLICATE_LIB_OK")
-
-    # 定义需要启动的服务列表
+def build_service_catalog() -> list[dict]:
+    # Keep startup selection data-driven so the default audio path does not require M7.
     services = [
         {"name": "M1 - ASR Service", "script": "services/asr_server.py", "port": 8001},
         {
@@ -49,6 +43,25 @@ def start_services():
             "port": 8006,
         },
     ]
+
+    if use_vcsum_demo_source():
+        print("检测到 MEETING_DEMO_SOURCE=vcsum，保留 M7 数据服务启动。")
+        return services
+
+    print("未检测到 MEETING_DEMO_SOURCE=vcsum，默认走目录音频 demo，跳过 M7 数据服务启动。")
+    return [svc for svc in services if svc["script"] != "services/data_server.py"]
+
+
+def start_services():
+    print(" 正在启动智能会议助手微服务集群...")
+
+    # 设置 Hugging Face 国内镜像源，解决模型下载超时问题
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+    # 解决 Windows 环境下常见的 OMP 冲突报错 (OMP: Error #15)
+    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    print("已设置环境变量 HF_ENDPOINT 和 KMP_DUPLICATE_LIB_OK")
+
+    services = build_service_catalog()
 
     processes = []
     failed_services = []

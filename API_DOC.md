@@ -6,15 +6,15 @@
 
 ## 服务总览
 
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| M1 ASR | 8001 | 单轨语言检测 + 语音转文字 |
-| M2 Summary | 8002 | 会议纪要生成 |
-| M3 Translation | 8003 | 翻译 & 待办提取 |
-| M4 Sentiment | 8004 | 情感分析 |
-| M5 Gateway | 8000 | WebSocket 网关 |
-| M6 Audio Input | 8005 | 本地目录独立音轨处理 |
-| M7 Data Service | 8006 | VCSum 数据加载与字幕流 |
+| 服务            | 端口 | 说明                      |
+| --------------- | ---- | ------------------------- |
+| M1 ASR          | 8001 | 单轨语言检测 + 语音转文字 |
+| M2 Summary      | 8002 | 会议纪要生成              |
+| M3 Translation  | 8003 | 翻译 & 待办提取           |
+| M4 Sentiment    | 8004 | 情感分析                  |
+| M5 Gateway      | 8000 | WebSocket 网关            |
+| M6 Audio Input  | 8005 | 本地目录独立音轨处理      |
+| M7 Data Service | 8006 | VCSum 数据加载与字幕流    |
 
 ---
 
@@ -31,6 +31,7 @@
 5. BTS 风格后处理
 
 **请求体：**
+
 ```json
 {
   "audio_base64": "Base64编码后的单轨音频",
@@ -44,6 +45,7 @@
 ```
 
 **响应：**
+
 ```json
 {
   "status": "success",
@@ -77,19 +79,21 @@
 
 ### POST `/api/v1/audio/process_directory`
 
-读取本地目录中的多个独立 `.m4a` 文件，并逐轨调用 M1 处理，最后合并 transcript。
+读取本地目录中的多个独立音轨文件，并逐轨调用 M1 处理，最后合并 transcript。默认支持的后缀包括 `.wav`、`.m4a`、`.mp3`、`.flac`、`.aac`、`.ogg`、`.webm`。
 
 **请求体：**
+
 ```json
 {
   "session_id": "meeting_demo",
   "input_dir": "/Users/orangezhi/Desktop/cityu/NLP/project/audio",
-  "glob_pattern": "*.m4a",
+  "glob_pattern": "*",
   "recursive": false
 }
 ```
 
 **响应：**
+
 ```json
 {
   "status": "success",
@@ -98,7 +102,7 @@
   "input_dir": "/Users/orangezhi/Desktop/cityu/NLP/project/audio",
   "track_info": [
     {
-      "filename": "audioOrangezhi11999480170.m4a",
+      "filename": "audioOrangezhi11999480170.wav",
       "source_channel": "audioOrangezhi11999480170",
       "speaker_label": "Orangezhi",
       "detected_language": "zh"
@@ -132,6 +136,7 @@
 ### POST `/api/v1/summary/generate`
 
 **请求体：**
+
 ```json
 {
   "session_id": "会话ID",
@@ -156,6 +161,7 @@
 分析发言情感和交互信号。
 
 **请求体：**
+
 ```json
 [
   {
@@ -170,6 +176,7 @@
 ```
 
 **响应：**
+
 ```json
 {
   "overall_summary": {
@@ -206,7 +213,20 @@
 
 ### WebSocket `/ws/meeting/{session_id}`
 
-当前第一阶段不改协议，语音主标准仍建议通过 M6 目录接口直接使用。
+当前 WebSocket 协议保持不变，但 `type=start_meeting` 且 `mode=demo` 时，网关默认会优先走目录音频桥接流程：
+
+1. 解析 `input_dir`；若请求未提供，则读取环境变量 `MEETING_AUDIO_INPUT_DIR`；若仍为空，则默认使用仓库根目录 `audio/`
+2. 调用 M6 `POST /api/v1/audio/process_directory`，默认使用 `glob_pattern="*"` 自动发现受支持的音频后缀
+3. 将 `merged_transcript` 逐条转换为现有前端可消费的 `subtitle` 消息
+4. 会议结束时继续复用现有的摘要、待办事项提取、情感和参与度分析流程
+
+如需显式切回旧版 VCSum 字幕流，可设置环境变量：
+
+```env
+MEETING_DEMO_SOURCE=vcsum
+```
+
+此时 `mode=demo` 会重新走 M7 `/api/v1/data/stream`。
 
 ---
 

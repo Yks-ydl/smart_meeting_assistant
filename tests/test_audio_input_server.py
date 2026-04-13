@@ -4,7 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from services.audio_input_server import discover_raw_sources, format_full_text
+from services.audio_input_server import (
+    ProcessDirectoryRequest,
+    discover_raw_sources,
+    format_full_text,
+)
 
 
 class AudioInputServerHelpersTest(unittest.TestCase):
@@ -22,6 +26,27 @@ class AudioInputServerHelpersTest(unittest.TestCase):
                 "audioOrangezhi11999480170",
                 "audioYANGKaisen21999480170",
             ])
+
+    def test_discover_raw_sources_default_pattern_reads_wav_tracks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "audioOrangezhi11999480170.wav").write_bytes(b"a")
+            (root / "audioYANGKaisen21999480170.wav").write_bytes(b"b")
+
+            sources = discover_raw_sources(root, "*", recursive=False)
+
+            self.assertEqual([source.source_id for source in sources], [
+                "audioOrangezhi11999480170",
+                "audioYANGKaisen21999480170",
+            ])
+
+    def test_process_directory_request_defaults_to_multi_format_pattern(self) -> None:
+        request_model = ProcessDirectoryRequest(
+            session_id="meeting_demo",
+            input_dir="audio",
+        )
+
+        self.assertEqual(request_model.glob_pattern, "*")
 
     def test_format_full_text_uses_timestamped_lines(self) -> None:
         transcript = [

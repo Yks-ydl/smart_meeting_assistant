@@ -24,6 +24,8 @@ from m1_speech.utils.schemas import AudioSource
 app = FastAPI(title="M6 - Audio Input Service")
 
 ASR_SERVICE_URL = os.getenv("ASR_SERVICE_URL", "http://127.0.0.1:8001/api/v1/asr/transcribe")
+DEFAULT_AUDIO_GLOB_PATTERN = "*"
+SUPPORTED_AUDIO_SUFFIXES = {".m4a", ".wav", ".mp3", ".flac", ".aac", ".ogg", ".webm"}
 
 
 class AudioServiceState:
@@ -48,7 +50,7 @@ state = AudioServiceState()
 class ProcessDirectoryRequest(BaseModel):
     session_id: str
     input_dir: str
-    glob_pattern: str = "*.m4a"
+    glob_pattern: str = DEFAULT_AUDIO_GLOB_PATTERN
     recursive: bool = False
 
 
@@ -78,16 +80,23 @@ def build_audio_preparator(glob_pattern: str) -> AudioPreparationManager:
 
 
 def discover_raw_sources(input_dir: str | Path, glob_pattern: str, recursive: bool) -> list[AudioSource]:
-    """扫描目录中的独立 `.m4a` 文件。"""
+    """扫描目录中的独立音轨文件，默认同时支持常见会议音频格式。"""
 
     root = Path(input_dir)
     if not root.exists():
         raise FileNotFoundError(f"Input directory does not exist: {root}")
 
     paths = sorted(root.rglob(glob_pattern) if recursive else root.glob(glob_pattern))
-    files = [path for path in paths if path.is_file()]
+    files = [
+        path
+        for path in paths
+        if path.is_file() and path.suffix.lower() in SUPPORTED_AUDIO_SUFFIXES
+    ]
     if not files:
-        raise FileNotFoundError(f"No files found in {root} with pattern {glob_pattern}")
+        supported = ", ".join(sorted(SUPPORTED_AUDIO_SUFFIXES))
+        raise FileNotFoundError(
+            f"No audio files found in {root} with pattern {glob_pattern}. Supported suffixes: {supported}"
+        )
 
     return [AudioSource(path=path, source_id=path.stem, speaker_hint=None) for path in files]
 
@@ -130,7 +139,7 @@ def format_full_text(merged_transcript: list[dict]) -> str:
 @app.post("/api/v1/audio/process_directory")
 async def process_directory(req: ProcessDirectoryRequest):
     """
-    读取本地目录中的多个独立 `.m4a` 文件，并输出统一会议 transcript。
+    读取本地目录中的多个独立音轨文件，并输出统一会议 transcript。
     """
 
     if state.is_processing:

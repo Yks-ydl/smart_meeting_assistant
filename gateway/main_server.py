@@ -1,3 +1,12 @@
+import sys
+from pathlib import Path
+
+# Ensure the project root is on sys.path so gateway.* imports work
+# both when this file is run as a script and when imported as a module.
+_project_root = str(Path(__file__).resolve().parents[1])
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -5,8 +14,13 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import asyncio
 import json
+import os
 import uvicorn
-from pathlib import Path
+from dataclasses import dataclass
+
+from gateway.demo_source import use_vcsum_demo_source
+
+DEFAULT_AUDIO_GLOB_PATTERN = "*"
 
 app = FastAPI(title="M5 - Main Gateway & Orchestrator")
 
@@ -23,6 +37,11 @@ def resolve_frontend_dist_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
 
+def resolve_project_root() -> Path:
+    """Keep project-root resolution in one place for gateway-side path handling."""
+    return Path(__file__).resolve().parents[1]
+
+
 frontend_dir = resolve_frontend_dist_dir()
 if frontend_dir.is_dir():
     app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
@@ -33,21 +52,96 @@ if frontend_dir.is_dir():
         return FileResponse(str(frontend_dir / "index.html"))
 
 
-# 各微服务的本地地址配置
-SERVICES = {
-    "asr": "http://127.0.0.1:8001/api/v1/asr/transcribe",
-    "summary": "http://127.0.0.1:8002/api/v1/summary/generate",
-    "translation": "http://127.0.0.1:8003/api/v1/translation/translate",
-    "action": "http://127.0.0.1:8003/api/v1/translation/extract_actions",
-    "sentiment": "http://127.0.0.1:8004/api/v1/sentiment/analyze",
-    "audio_start": "http://127.0.0.1:8005/api/v1/audio/start_capture",
-    "audio_stop": "http://127.0.0.1:8005/api/v1/audio/stop_capture",
-    "audio_upload": "http://127.0.0.1:8005/api/v1/audio/upload_multitrack",
-    "audio_status": "http://127.0.0.1:8005/api/v1/audio/status",
-    "audio_tracks": "http://127.0.0.1:8005/api/v1/audio/tracks",
-    "data_status": "http://127.0.0.1:8006/api/v1/data/status",
-    "data_stream": "http://127.0.0.1:8006/api/v1/data/stream",
-}
+def build_service_endpoints() -> dict[str, str]:
+    # Keep service URLs in one place so local and Colab targets share the same mapping logic.
+    return {
+        "asr": "http://127.0.0.1:8001/api/v1/asr/transcribe",
+        "summary": os.getenv(
+            "SUMMARY_SERVICE_URL",
+            "http://127.0.0.1:8002/api/v1/summary/generate",
+        ),
+        "translation": "http://127.0.0.1:8003/api/v1/translation/translate",
+        "action": "http://127.0.0.1:8003/api/v1/translation/extract_actions",
+        "sentiment": "http://127.0.0.1:8004/api/v1/sentiment/analyze",
+        "audio_process_directory": "http://127.0.0.1:8005/api/v1/audio/process_directory",
+        "audio_start": "http://127.0.0.1:8005/api/v1/audio/start_capture",
+        "audio_stop": "http://127.0.0.1:8005/api/v1/audio/stop_capture",
+        "audio_upload": "http://127.0.0.1:8005/api/v1/audio/upload_multitrack",
+        "audio_status": "http://127.0.0.1:8005/api/v1/audio/status",
+        "audio_tracks": "http://127.0.0.1:8005/api/v1/audio/tracks",
+        "data_status": "http://127.0.0.1:8006/api/v1/data/status",
+        "data_stream": "http://127.0.0.1:8006/api/v1/data/stream",
+    }
+
+
+SERVICES = build_service_endpoints()
+
+
+@dataclass
+class SummaryRequestConfig:
+    timeout_sec: float
+    retries: int
+    headers: dict[str, str]
+
+
+def _parse_float(value: str | None, default_value: float) -> float:
+    try:
+        return float(value) if value is not None else default_value
+    except (TypeError, ValueError):
+        return default_value
+
+
+def _parse_int(value: str | None, default_value: int) -> int:
+    try:
+        return int(value) if value is not None else default_value
+    except (TypeError, ValueError):
+        return default_value
+
+
+def build_summary_request_config() -> SummaryRequestConfig:
+    timeout_sec = _parse_float(os.getenv("SUMMARY_REMOTE_TIMEOUT_SEC"), 90.0)
+    retries = max(0, _parse_int(os.getenv("SUMMARY_REMOTE_RETRIES"), 1))
+    auth_header = os.getenv("SUMMARY_REMOTE_AUTH_HEADER", "Authorization").strip()
+    auth_scheme = os.getenv("SUMMARY_REMOTE_AUTH_SCHEME", "Bearer").strip()
+    auth_token = os.getenv("SUMMARY_REMOTE_AUTH_TOKEN", "").strip()
+
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers[auth_header] = (
+            f"{auth_scheme} {auth_token}".strip() if auth_scheme else auth_token
+        )
+
+    return SummaryRequestConfig(timeout_sec=timeout_sec, retries=retries, headers=headers)
+
+
+async def call_summary_service(
+    client: httpx.AsyncClient,
+    summary_url: str,
+    payload: dict,
+    config: SummaryRequestConfig,
+) -> dict:
+    attempts = config.retries + 1
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            response = await client.post(
+                summary_url,
+                json=payload,
+                timeout=config.timeout_sec,
+                headers=config.headers or None,
+            )
+            return response.json()
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            print(
+                f"[Gateway] Summary request failed attempt {attempt}/{attempts} "
+                f"url={summary_url}: {exc}"
+            )
+
+    return {
+        "error": f"summary service request failed after {attempts} attempts: {last_error}"
+    }
 
 
 class ConnectionManager:
@@ -78,17 +172,68 @@ def normalize_target_lang(value: str | None) -> str:
     return "en"
 
 
+def resolve_demo_audio_input_dir(input_dir: str | None) -> Path:
+    """Resolve demo-mode audio input from request, env, or repo-local sample directory."""
+    raw_value = (input_dir or "").strip() or os.getenv("MEETING_AUDIO_INPUT_DIR", "").strip()
+    candidate = Path(raw_value).expanduser() if raw_value else resolve_project_root() / "audio"
+    if not candidate.is_absolute():
+        candidate = resolve_project_root() / candidate
+    return candidate
+
+
+def build_audio_tracks_url(session_id: str) -> str:
+    return f"{SERVICES['audio_tracks'].rstrip('/')}/{session_id}"
+
+
+def build_demo_audio_request(session_id: str, input_dir: str | None) -> dict:
+    return {
+        "session_id": session_id,
+        "input_dir": str(resolve_demo_audio_input_dir(input_dir)),
+        "glob_pattern": os.getenv("MEETING_AUDIO_GLOB_PATTERN", DEFAULT_AUDIO_GLOB_PATTERN),
+        "recursive": os.getenv("MEETING_AUDIO_RECURSIVE", "false").strip().lower()
+        in {"1", "true", "yes", "on"},
+    }
+
+
+def build_subtitle_from_audio_segment(session_id: str, index: int, segment: dict) -> dict:
+    """Reuse one normalization path so all M6 transcript items look like demo subtitles."""
+    speaker = str(segment.get("speaker_label") or segment.get("speaker") or "Unknown")
+    text = str(segment.get("corrected_text") or segment.get("text") or "").strip()
+    start_time = parse_timestamp_to_seconds(segment.get("start_time"), float(index))
+    return {
+        "id": f"{session_id}_{index}_{segment.get('source_channel', 'audio')}",
+        "speaker": speaker,
+        "text": text,
+        "timestamp": f"{start_time:.3f}",
+        "language": normalize_target_lang(str(segment.get("language") or "zh")),
+        "source": "audio_directory",
+    }
+
+
+def build_sentiment_turn_from_audio_segment(subtitle: dict, segment: dict) -> dict:
+    """Keep audio-directory sentiment input aligned with the subtitle text shown to users."""
+    return {
+        "text": subtitle["text"],
+        "corrected_text": subtitle["text"],
+        "speaker_label": subtitle["speaker"],
+        "start_time": segment.get("start_time"),
+        "end_time": segment.get("end_time"),
+        "language": subtitle["language"],
+    }
+
+
 async def call_service(
     client: httpx.AsyncClient,
     url: str,
     payload: dict | list | None = None,
     method: str = "POST",
+    timeout: float = 30.0,
 ):
     try:
         if method == "POST":
-            response = await client.post(url, json=payload, timeout=30.0)
+            response = await client.post(url, json=payload, timeout=timeout)
         else:
-            response = await client.get(url, timeout=30.0)
+            response = await client.get(url, timeout=timeout)
         return response.json()
     except Exception as e:
         return {"error": str(e)}
@@ -287,6 +432,109 @@ async def stream_demo_data(
             pass
 
 
+async def stream_audio_directory_data(
+    client: httpx.AsyncClient,
+    session_id: str,
+    websocket: WebSocket,
+    full_text_ref: dict,
+    target_lang_ref: dict,
+    sentiment_turns_ref: dict,
+    input_dir: str | None = None,
+) -> bool:
+    """Bridge M6 batch transcript output into the existing demo subtitle stream contract."""
+    audio_payload = build_demo_audio_request(session_id=session_id, input_dir=input_dir)
+    # M6 processes multiple audio files and calls M1 ASR for each; needs a long timeout
+    audio_result = await call_service(
+        client,
+        SERVICES["audio_process_directory"],
+        audio_payload,
+        timeout=600.0,
+    )
+
+    if audio_result.get("error"):
+        await manager.send_message(
+            {
+                "type": "error",
+                "data": {
+                    "message": f"目录音频处理失败，请检查 M6 服务：{audio_result['error']}"
+                },
+            },
+            websocket,
+        )
+        return False
+
+    if audio_result.get("status") not in {"success", "partial_success"}:
+        await manager.send_message(
+            {
+                "type": "error",
+                "data": {
+                    "message": audio_result.get("message", "目录音频处理失败")
+                },
+            },
+            websocket,
+        )
+        return False
+
+    merged_transcript = audio_result.get("merged_transcript") or []
+    if not merged_transcript:
+        await manager.send_message(
+            {
+                "type": "error",
+                "data": {
+                    "message": "音频目录处理中未产生可用字幕，请检查输入音轨。"
+                },
+            },
+            websocket,
+        )
+        return False
+
+    full_text_ref["text"] = audio_result.get("full_text") or ""
+    needs_generated_full_text = not full_text_ref["text"].strip()
+
+    translation_tasks: list[asyncio.Task] = []
+    for index, segment in enumerate(merged_transcript):
+        subtitle = build_subtitle_from_audio_segment(session_id, index, segment)
+        if not subtitle["text"]:
+            continue
+
+        await manager.send_message({"type": "subtitle", "data": subtitle}, websocket)
+        if needs_generated_full_text:
+            full_text_ref["text"] += f"[{subtitle['speaker']}]: {subtitle['text']}\n"
+
+        append_sentiment_turn(
+            sentiment_turns_ref,
+            build_sentiment_turn_from_audio_segment(subtitle, segment),
+        )
+        translation_tasks.append(
+            asyncio.create_task(
+                process_translation_async(
+                    client,
+                    session_id,
+                    subtitle["id"],
+                    subtitle["text"],
+                    target_lang_ref["value"],
+                    websocket,
+                )
+            )
+        )
+
+    if translation_tasks:
+        await asyncio.gather(*translation_tasks)
+
+    await manager.send_message(
+        {
+            "type": "stream_complete",
+            "data": {
+                "total": len(merged_transcript),
+                "source": "audio_directory",
+                "input_dir": audio_result.get("input_dir", audio_payload["input_dir"]),
+            },
+        },
+        websocket,
+    )
+    return True
+
+
 @app.websocket("/ws/meeting/{session_id}")
 async def meeting_endpoint(websocket: WebSocket, session_id: str):
     """
@@ -309,6 +557,7 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
 
                 if message.get("type") == "start_meeting":
                     mode = message.get("mode", "demo")
+                    input_dir = message.get("input_dir")
                     full_text_ref["text"] = ""
                     sentiment_turns_ref["items"] = []
                     sentiment_enabled_ref["value"] = bool(
@@ -330,16 +579,29 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                     )
 
                     if mode == "demo":
-                        asyncio.create_task(
-                            stream_demo_data(
-                                client,
-                                session_id,
-                                websocket,
-                                full_text_ref,
-                                target_lang_ref,
-                                sentiment_turns_ref,
+                        if use_vcsum_demo_source():
+                            asyncio.create_task(
+                                stream_demo_data(
+                                    client,
+                                    session_id,
+                                    websocket,
+                                    full_text_ref,
+                                    target_lang_ref,
+                                    sentiment_turns_ref,
+                                )
                             )
-                        )
+                        else:
+                            asyncio.create_task(
+                                stream_audio_directory_data(
+                                    client,
+                                    session_id,
+                                    websocket,
+                                    full_text_ref,
+                                    target_lang_ref,
+                                    sentiment_turns_ref,
+                                    input_dir,
+                                )
+                            )
 
                 elif message.get("type") == "audio_chunk":
                     # 1. Pipeline 阶段一：调用 ASR
@@ -425,9 +687,15 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                     summary_payload = {"session_id": session_id, "text": full_text}
                     action_payload = {"session_id": session_id, "text": full_text}
                     sentiment_payload = sentiment_turns_ref["items"]
+                    summary_config = build_summary_request_config()
 
                     summary_task = asyncio.create_task(
-                        call_service(client, SERVICES["summary"], summary_payload)
+                        call_summary_service(
+                            client=client,
+                            summary_url=SERVICES["summary"],
+                            payload=summary_payload,
+                            config=summary_config,
+                        )
                     )
                     action_task = asyncio.create_task(
                         call_service(client, SERVICES["action"], action_payload)

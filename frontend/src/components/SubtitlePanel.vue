@@ -32,8 +32,8 @@
         <p v-if="liveError" class="error-text">{{ liveError }}</p>
         <p v-else-if="isRunning">会议进行中，等待字幕数据...</p>
         <p v-else>等待会议开始...</p>
-        <p class="hint" v-if="liveError">请检查 M7 数据服务（8006）与网关日志输出</p>
-        <p class="hint" v-else-if="isRunning">请确认数据服务已启动并正在推送字幕流</p>
+        <p class="hint" v-if="liveError">请检查网关日志，以及 M6 音频输入服务或 VCSum 回退模式配置</p>
+        <p class="hint" v-else-if="isRunning">请确认目录音频可读取，网关正在推送字幕流</p>
         <p class="hint" v-else>字幕将在会议开始后实时显示</p>
       </div>
     </div>
