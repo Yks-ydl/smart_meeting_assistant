@@ -46,5 +46,10 @@ async def extract_actions(content: TextContent):
         "action_items": actions_result
     }
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "service": "M3 - Translation & Action Extraction"}
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8003)

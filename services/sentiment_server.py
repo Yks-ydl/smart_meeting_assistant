@@ -53,5 +53,10 @@ async def analyze_sentiment(utterance: Utterance):
         "analysis": analysis_result
     }
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "service": "M4 - Sentiment & Engagement Analysis"}
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8004)

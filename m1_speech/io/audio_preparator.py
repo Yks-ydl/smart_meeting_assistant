@@ -86,7 +86,8 @@ class AudioPreparationManager:
         try:
             import torchaudio  # noqa: F401
             import torchcodec  # noqa: F401
-        except ImportError:
+        except (ImportError, OSError) as e:
+            print(f"[AudioPreparator] Warning: Cannot use torchaudio/torchcodec ({e}). Falling back to librosa.")
             return False
         return True
 

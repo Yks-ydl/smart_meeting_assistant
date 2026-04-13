@@ -12,13 +12,13 @@ def start_services():
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
     print("已设置环境变量 HF_ENDPOINT 和 KMP_DUPLICATE_LIB_OK")
     
-    # 定义需要启动的服务列表
+    # 定义需要启动的服务列表（Gateway 优先启动以挂载前端）
     services = [
+        {"name": "M5 - Main Gateway", "script": "gateway/main_server.py", "port": 8000},
         {"name": "M1 - ASR Service", "script": "services/asr_server.py", "port": 8001},
         {"name": "M2 - Summary Service", "script": "services/summary_server.py", "port": 8002},
         {"name": "M3 - Translation & Action", "script": "services/translation_server.py", "port": 8003},
         {"name": "M4 - Sentiment Analysis", "script": "services/sentiment_server.py", "port": 8004},
-        {"name": "M5 - Main Gateway", "script": "gateway/main_server.py", "port": 8000},
         {"name": "M6 - Audio Input", "script": "services/audio_input_server.py", "port": 8005},
     ]
 
@@ -32,7 +32,11 @@ def start_services():
         time.sleep(1) # 稍微延迟，避免输出混乱
         
     print("\n 所有服务已启动！")
-    print("您可以通过 Gateway 访问 WebSocket 测试，或者直接访问各微服务的 Swagger 文档：")
+    print("\n" + "=" * 60)
+    print("🌐 前端访问地址：")
+    print(f"   http://127.0.0.1:8000")
+    print("=" * 60)
+    print("\n📚 各微服务 API 文档（Swagger UI）：")
     for svc in services:
         print(f" - {svc['name']}: http://127.0.0.1:{svc['port']}/docs")
         
