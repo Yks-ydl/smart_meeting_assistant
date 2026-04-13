@@ -1,0 +1,8 @@
+# 环境变量文件
+.env
+.env.*
+!.env.example
+!.env.template
+
+# 测试文件夹及其下所有文件
+tests/
