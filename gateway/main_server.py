@@ -15,13 +15,12 @@ import asyncio
 import json
 import os
 import uvicorn
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from gateway.demo_source import use_vcsum_demo_source
 
 DEFAULT_AUDIO_GLOB_PATTERN = "*"
-DEFAULT_PIPELINE_REPLAY_DELAY_SEC = 5.0
 
 app = FastAPI(title="M5 - Main Gateway & Orchestrator")
 
@@ -154,8 +153,7 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+        self.active_connections.remove(websocket)
 
     async def send_message(self, message: dict, websocket: WebSocket):
         await websocket.send_json(message)
@@ -174,20 +172,6 @@ def normalize_target_lang(value: str | None) -> str:
     return "en"
 
 
-def coerce_bool(value, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-
-    return default
-
-
 def resolve_demo_audio_input_dir(input_dir: str | None) -> Path:
     """Resolve demo-mode audio input from request, env, or repo-local sample directory."""
     raw_value = (input_dir or "").strip() or os.getenv("MEETING_AUDIO_INPUT_DIR", "").strip()
@@ -201,29 +185,13 @@ def build_audio_tracks_url(session_id: str) -> str:
     return f"{SERVICES['audio_tracks'].rstrip('/')}/{session_id}"
 
 
-def build_demo_audio_request(
-    session_id: str,
-    input_dir: str | None,
-    glob_pattern: str | None = None,
-    recursive: bool | None = None,
-) -> dict:
-    # Keep one request builder so both legacy demo mode and the new pipeline stay aligned.
-    resolved_glob_pattern = (
-        glob_pattern.strip()
-        if isinstance(glob_pattern, str) and glob_pattern.strip()
-        else os.getenv("MEETING_AUDIO_GLOB_PATTERN", DEFAULT_AUDIO_GLOB_PATTERN)
-    )
-    resolved_recursive = (
-        recursive
-        if isinstance(recursive, bool)
-        else os.getenv("MEETING_AUDIO_RECURSIVE", "false").strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
+def build_demo_audio_request(session_id: str, input_dir: str | None) -> dict:
     return {
         "session_id": session_id,
         "input_dir": str(resolve_demo_audio_input_dir(input_dir)),
-        "glob_pattern": resolved_glob_pattern,
-        "recursive": resolved_recursive,
+        "glob_pattern": os.getenv("MEETING_AUDIO_GLOB_PATTERN", DEFAULT_AUDIO_GLOB_PATTERN),
+        "recursive": os.getenv("MEETING_AUDIO_RECURSIVE", "false").strip().lower()
+        in {"1", "true", "yes", "on"},
     }
 
 
@@ -331,373 +299,6 @@ def append_sentiment_turn(sentiment_turns_ref: dict, raw_turn: dict):
             "speaker_label": speaker,
             "language": language,
         }
-    )
-
-
-def build_empty_sentiment_report() -> dict:
-    return {
-        "overall_summary": {
-            "total_turns": 0,
-            "dominant_signals": [],
-            "atmosphere": "Positive/Constructive",
-        },
-        "speaker_profiles": {},
-        "significant_moments": [],
-    }
-
-
-def build_emitted_full_text_line(speaker: str, text: str) -> str:
-    return f"[{speaker}]: {text}"
-
-
-def resolve_pipeline_replay_delay() -> float:
-    delay = _parse_float(
-        os.getenv("GATEWAY_REPLAY_DELAY_SEC"), DEFAULT_PIPELINE_REPLAY_DELAY_SEC
-    )
-    return max(0.0, delay)
-
-
-@dataclass
-class DirectoryPipelineRequest:
-    session_id: str
-    input_dir: str | None
-    glob_pattern: str
-    target_lang: str
-    enable_translation: bool
-    enable_actions: bool
-    enable_sentiment: bool
-
-
-@dataclass
-class DirectoryPipelineState:
-    emitted_full_text_lines: list[str] = field(default_factory=list)
-    emitted_sentiment_turns: list[dict] = field(default_factory=list)
-    action_window_start: float | None = None
-    action_window_texts: list[str] = field(default_factory=list)
-    emitted_segments: int = 0
-
-    def emitted_full_text(self) -> str:
-        return "\n".join(self.emitted_full_text_lines).strip()
-
-
-def build_directory_pipeline_request(message: dict) -> DirectoryPipelineRequest:
-    return DirectoryPipelineRequest(
-        session_id=str(message.get("session_id") or f"session-{os.urandom(4).hex()}"),
-        input_dir=(
-            str(message.get("input_dir")).strip()
-            if message.get("input_dir") is not None and str(message.get("input_dir")).strip()
-            else None
-        ),
-        glob_pattern=(
-            str(message.get("glob_pattern")).strip()
-            if message.get("glob_pattern") is not None and str(message.get("glob_pattern")).strip()
-            else DEFAULT_AUDIO_GLOB_PATTERN
-        ),
-        target_lang=normalize_target_lang(message.get("target_lang")),
-        enable_translation=coerce_bool(message.get("enable_translation"), True),
-        enable_actions=coerce_bool(message.get("enable_actions"), True),
-        enable_sentiment=coerce_bool(message.get("enable_sentiment"), True),
-    )
-
-
-async def send_directory_pipeline_info(websocket: WebSocket, message: str):
-    await websocket.send_json({"type": "info", "message": message})
-
-
-async def flush_action_window(
-    client: httpx.AsyncClient,
-    websocket: WebSocket,
-    request: DirectoryPipelineRequest,
-    state: DirectoryPipelineState,
-    window_end: float,
-):
-    if (
-        not request.enable_actions
-        or state.action_window_start is None
-        or not state.action_window_texts
-    ):
-        return
-
-    action_res = await call_service(
-        client,
-        SERVICES["action"],
-        {"session_id": request.session_id, "text": "\n".join(state.action_window_texts)},
-    )
-    await websocket.send_json(
-        {
-            "type": "action_result",
-            "data": {
-                "actions": action_res,
-                "window_start": state.action_window_start,
-                "window_end": window_end,
-            },
-        }
-    )
-    state.action_window_start = window_end
-    state.action_window_texts = []
-
-
-async def finalize_directory_pipeline(
-    client: httpx.AsyncClient,
-    websocket: WebSocket,
-    request: DirectoryPipelineRequest,
-    state: DirectoryPipelineState,
-):
-    emitted_full_text = state.emitted_full_text()
-
-    if state.action_window_texts:
-        final_window_end = 0.0
-        if state.emitted_sentiment_turns:
-            final_window_end = float(
-                state.emitted_sentiment_turns[-1].get("end_time") or 0.0
-            )
-        await flush_action_window(
-            client=client,
-            websocket=websocket,
-            request=request,
-            state=state,
-            window_end=final_window_end,
-        )
-
-    if not emitted_full_text:
-        await websocket.send_json(
-            {
-                "type": "meeting_end_report",
-                "data": {
-                    "summary": {"summary": "尚无可总结内容"},
-                    "actions": {"parsed_actions": [], "action_items": []},
-                    "sentiment": build_empty_sentiment_report()
-                    if request.enable_sentiment
-                    else None,
-                },
-            }
-        )
-        return
-
-    await send_directory_pipeline_info(
-        websocket,
-        "⏳ 阶段 3/3: 所有已输出片段处理完毕，正在生成全局摘要与待办...",
-    )
-
-    summary_payload = {"session_id": request.session_id, "text": emitted_full_text}
-    summary_task = asyncio.create_task(
-        call_summary_service(
-            client=client,
-            summary_url=SERVICES["summary"],
-            payload=summary_payload,
-            config=build_summary_request_config(),
-        )
-    )
-
-    action_task = None
-    if request.enable_actions:
-        action_task = asyncio.create_task(
-            call_service(client, SERVICES["action"], summary_payload)
-        )
-
-    sentiment_task = None
-    if request.enable_sentiment:
-        sentiment_task = asyncio.create_task(
-            call_service(client, SERVICES["sentiment"], state.emitted_sentiment_turns)
-        )
-
-    summary_res = await summary_task
-    action_res = await action_task if action_task else None
-    sentiment_res = await sentiment_task if sentiment_task else None
-
-    await websocket.send_json(
-        {
-            "type": "meeting_end_report",
-            "data": {
-                "summary": summary_res,
-                "actions": action_res,
-                "sentiment": sentiment_res,
-            },
-        }
-    )
-
-
-async def run_directory_pipeline(
-    client: httpx.AsyncClient,
-    websocket: WebSocket,
-    request: DirectoryPipelineRequest,
-    stop_requested: asyncio.Event,
-):
-    await send_directory_pipeline_info(
-        websocket,
-        "⏳ 阶段 1/3: 正在调用 M6 批量处理音频目录，这可能需要几分钟...",
-    )
-
-    audio_payload = build_demo_audio_request(
-        session_id=request.session_id,
-        input_dir=request.input_dir,
-        glob_pattern=request.glob_pattern,
-        recursive=False,
-    )
-    audio_result = await call_service(
-        client,
-        SERVICES["audio_process_directory"],
-        audio_payload,
-        timeout=1200.0,
-    )
-
-    if audio_result.get("error"):
-        await websocket.send_json(
-            {
-                "type": "error",
-                "message": f"目录音频处理失败，请检查 M6 服务：{audio_result['error']}",
-            }
-        )
-        return
-
-    if audio_result.get("status") not in {"success", "partial_success"}:
-        await websocket.send_json(
-            {
-                "type": "error",
-                "message": audio_result.get("message", "目录音频处理失败"),
-            }
-        )
-        return
-
-    merged_transcript = audio_result.get("merged_transcript") or []
-    if not merged_transcript:
-        await websocket.send_json(
-            {
-                "type": "error",
-                "message": "未提取到任何转录文本",
-            }
-        )
-        return
-
-    await send_directory_pipeline_info(
-        websocket,
-        "✅ 阶段 1 完成！开始流式回放分析结果 (每5秒输出一段)...",
-    )
-
-    state = DirectoryPipelineState()
-    replay_delay = resolve_pipeline_replay_delay()
-
-    for index, segment in enumerate(merged_transcript):
-        if stop_requested.is_set():
-            break
-
-        subtitle = build_subtitle_from_audio_segment(request.session_id, index, segment)
-        if not subtitle["text"]:
-            continue
-
-        start_time = parse_timestamp_to_seconds(segment.get("start_time"), float(index))
-        end_time = parse_timestamp_to_seconds(segment.get("end_time"), start_time + 1.5)
-        if end_time <= start_time:
-            end_time = start_time + 1.0
-
-        subtitle_payload = {
-            "id": subtitle["id"],
-            "speaker": subtitle["speaker"],
-            "text": subtitle["text"],
-            "language": subtitle["language"],
-            "source": subtitle["source"],
-            "timestamp": subtitle["timestamp"],
-            "start_time": round(start_time, 3),
-            "end_time": round(end_time, 3),
-        }
-        await websocket.send_json({"type": "asr_result", "data": subtitle_payload})
-
-        state.emitted_segments += 1
-        state.emitted_full_text_lines.append(
-            build_emitted_full_text_line(subtitle["speaker"], subtitle["text"])
-        )
-        append_sentiment_turn(
-            {"items": state.emitted_sentiment_turns},
-            build_sentiment_turn_from_audio_segment(
-                subtitle,
-                {
-                    **segment,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                },
-            ),
-        )
-
-        if state.action_window_start is None:
-            state.action_window_start = start_time
-        state.action_window_texts.append(
-            f"{subtitle['speaker']}: {subtitle['text']}"
-        )
-
-        translation_task = None
-        if request.enable_translation:
-            translation_task = asyncio.create_task(
-                call_service(
-                    client,
-                    SERVICES["translation"],
-                    {
-                        "session_id": request.session_id,
-                        "text": subtitle["text"],
-                        "target_lang": request.target_lang,
-                    },
-                )
-            )
-
-        sentiment_task = None
-        if request.enable_sentiment:
-            sentiment_task = asyncio.create_task(
-                call_service(
-                    client,
-                    SERVICES["sentiment"],
-                    {
-                        "session_id": request.session_id,
-                        "speaker": subtitle["speaker"],
-                        "text": subtitle["text"],
-                    },
-                )
-            )
-
-        if translation_task or sentiment_task:
-            translation_res = await translation_task if translation_task else None
-            sentiment_res = await sentiment_task if sentiment_task else None
-            await websocket.send_json(
-                {
-                    "type": "analysis_result",
-                    "data": {
-                        "subtitle_id": subtitle["id"],
-                        "speaker": subtitle["speaker"],
-                        "timestamp": round(start_time, 3),
-                        "translation": {
-                            **translation_res,
-                            "subtitle_id": subtitle["id"],
-                        }
-                        if translation_res
-                        else None,
-                        "sentiment": sentiment_res,
-                    },
-                }
-            )
-
-        if (
-            request.enable_actions
-            and state.action_window_start is not None
-            and end_time - state.action_window_start >= 30.0
-            and state.action_window_texts
-        ):
-            await flush_action_window(
-                client=client,
-                websocket=websocket,
-                request=request,
-                state=state,
-                window_end=end_time,
-            )
-
-        if replay_delay > 0:
-            try:
-                await asyncio.wait_for(stop_requested.wait(), timeout=replay_delay)
-            except asyncio.TimeoutError:
-                pass
-
-    await finalize_directory_pipeline(
-        client=client,
-        websocket=websocket,
-        request=request,
-        state=state,
     )
 
 
@@ -934,59 +535,6 @@ async def stream_audio_directory_data(
     return True
 
 
-@app.websocket("/ws/pipeline/dir")
-async def ws_pipeline_dir(websocket: WebSocket):
-    await manager.connect(websocket)
-    stop_requested = asyncio.Event()
-
-    try:
-        initial_payload = json.loads(await websocket.receive_text())
-        request = build_directory_pipeline_request(initial_payload)
-
-        async with httpx.AsyncClient() as client:
-            replay_task = asyncio.create_task(
-                run_directory_pipeline(
-                    client=client,
-                    websocket=websocket,
-                    request=request,
-                    stop_requested=stop_requested,
-                )
-            )
-            control_task = asyncio.create_task(websocket.receive_text())
-
-            while True:
-                done, _ = await asyncio.wait(
-                    {replay_task, control_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                if replay_task in done:
-                    if not control_task.done():
-                        control_task.cancel()
-                    await replay_task
-                    break
-
-                if control_task in done:
-                    control_message = json.loads(control_task.result())
-                    if control_message.get("type") == "end_meeting":
-                        stop_requested.set()
-
-                    if replay_task.done():
-                        break
-
-                    control_task = asyncio.create_task(websocket.receive_text())
-    except WebSocketDisconnect:
-        stop_requested.set()
-        print("[Gateway] Directory pipeline disconnected")
-    except Exception as error:
-        try:
-            await websocket.send_json({"type": "error", "message": str(error)})
-        except Exception:
-            pass
-    finally:
-        manager.disconnect(websocket)
-
-
 @app.websocket("/ws/meeting/{session_id}")
 async def meeting_endpoint(websocket: WebSocket, session_id: str):
     """
@@ -1191,28 +739,6 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
 @app.get("/health")
 def health_check():
     return {"status": "ok", "message": "Gateway is running"}
-
-
-@app.get("/health/all")
-async def health_check_all():
-    service_urls = {
-        "M1_ASR": "http://127.0.0.1:8001/health",
-        "M2_Summary": "http://127.0.0.1:8002/health",
-        "M3_Translation": "http://127.0.0.1:8003/health",
-        "M4_Sentiment": "http://127.0.0.1:8004/health",
-        "M6_Audio": "http://127.0.0.1:8005/health",
-    }
-    results = {}
-
-    async with httpx.AsyncClient() as client:
-        for name, url in service_urls.items():
-            try:
-                response = await client.get(url, timeout=5.0)
-                results[name] = response.json()
-            except Exception as error:  # noqa: BLE001
-                results[name] = {"status": "unreachable", "error": str(error)}
-
-    return {"status": "ok", "services": results}
 
 
 if __name__ == "__main__":
