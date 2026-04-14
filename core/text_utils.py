@@ -6,6 +6,8 @@
 import re
 from typing import List
 
+from core.chinese_utils import normalize_simplified_chinese_text
+
 
 def clean_meeting_text(text: str) -> str:
     """
@@ -23,6 +25,8 @@ def clean_meeting_text(text: str) -> str:
     text = '\n'.join(lines)
     # 去除首尾空白
     text = text.strip()
+    # Summary prompts should see one normalized Simplified-Chinese transcript variant.
+    text = normalize_simplified_chinese_text(text)
     return text
 
 

@@ -196,6 +196,7 @@ function renderMarkdown(text: string): string {
   box-shadow: var(--shadow-card);
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: var(--meeting-panel-min-height);
 }
 
@@ -225,6 +226,8 @@ function renderMarkdown(text: string): string {
 .summary-content {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
   gap: 24px;
 }
 

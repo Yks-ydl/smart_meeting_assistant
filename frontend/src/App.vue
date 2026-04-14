@@ -25,7 +25,7 @@
           </div>
 
           <div class="summary-section" v-if="showSummary">
-            <div class="summary-panel-row">
+            <div ref="summaryPanelRowRef" class="summary-panel-row">
               <SummaryPanel />
               <SentimentPanel v-if="config.sentimentEnabled" />
             </div>
@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useMeetingStore } from './stores/meeting'
 import ControlPanel from './components/ControlPanel.vue'
 import SubtitlePanel from './components/SubtitlePanel.vue'
@@ -71,6 +71,10 @@ import SentimentPanel from './components/SentimentPanel.vue'
 import SummaryPanel from './components/SummaryPanel.vue'
 
 const { isRunning, isFinalizing, showRuntimeSurface, config, summary, summaryStatus } = useMeetingStore()
+const summaryPanelRowRef = ref<HTMLDivElement | null>(null)
+
+let panelHeightObserver: ResizeObserver | null = null
+let syncedResultPanelHeight = 0
 
 const showSummary = computed(() => {
   if (showRuntimeSurface.value) {
@@ -84,6 +88,83 @@ const statusText = computed(() => {
     return '会议结束中'
   }
   return isRunning.value ? '会议进行中' : '等待开始'
+})
+
+function clearResultPanelMinHeight(): void {
+  const row = summaryPanelRowRef.value
+  if (!row) {
+    syncedResultPanelHeight = 0
+    return
+  }
+
+  row.querySelectorAll<HTMLElement>('.summary-panel, .sentiment-panel').forEach((panel) => {
+    panel.style.removeProperty('min-height')
+  })
+  syncedResultPanelHeight = 0
+}
+
+function syncResultPanelHeights(): void {
+  const row = summaryPanelRowRef.value
+  if (!row || !showSummary.value || !config.value.sentimentEnabled) {
+    clearResultPanelMinHeight()
+    return
+  }
+
+  const panels = Array.from(
+    row.querySelectorAll<HTMLElement>('.summary-panel, .sentiment-panel'),
+  )
+  if (panels.length < 2) {
+    clearResultPanelMinHeight()
+    return
+  }
+
+  // Use measured scroll heights so both result panels stay aligned without duplicating layout rules.
+  const nextHeight = Math.max(
+    ...panels.map((panel) =>
+      Math.ceil(Math.max(panel.scrollHeight, panel.getBoundingClientRect().height)),
+    ),
+  )
+  if (!nextHeight || nextHeight === syncedResultPanelHeight) {
+    return
+  }
+
+  syncedResultPanelHeight = nextHeight
+  panels.forEach((panel) => {
+    panel.style.minHeight = `${nextHeight}px`
+  })
+}
+
+function observeResultPanelHeights(): void {
+  panelHeightObserver?.disconnect()
+
+  const row = summaryPanelRowRef.value
+  if (!row || !showSummary.value || !config.value.sentimentEnabled) {
+    clearResultPanelMinHeight()
+    return
+  }
+
+  panelHeightObserver = new ResizeObserver(() => {
+    requestAnimationFrame(() => syncResultPanelHeights())
+  })
+
+  row.querySelectorAll<HTMLElement>('.summary-panel, .sentiment-panel').forEach((panel) => {
+    panelHeightObserver?.observe(panel)
+  })
+  syncResultPanelHeights()
+}
+
+watch(
+  [showSummary, () => config.value.sentimentEnabled],
+  async () => {
+    await nextTick()
+    observeResultPanelHeights()
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  panelHeightObserver?.disconnect()
+  clearResultPanelMinHeight()
 })
 </script>
 
@@ -211,7 +292,7 @@ const statusText = computed(() => {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 24px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .welcome-section {

@@ -18,6 +18,10 @@ import uvicorn
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.chinese_utils import (
+    normalize_simplified_chinese_payload,
+    normalize_simplified_chinese_text,
+)
 from gateway.demo_source import use_vcsum_demo_source
 
 DEFAULT_AUDIO_GLOB_PATTERN = "*"
@@ -185,6 +189,18 @@ def build_audio_tracks_url(session_id: str) -> str:
     return f"{SERVICES['audio_tracks'].rstrip('/')}/{session_id}"
 
 
+def normalize_speaker_and_text(speaker: str, text: str) -> tuple[str, str]:
+    """Keep speaker/text normalization in one place for realtime and batch flows."""
+    normalized_speaker = normalize_simplified_chinese_text(speaker.strip()) or "Unknown"
+    normalized_text = normalize_simplified_chinese_text(text.strip())
+    return normalized_speaker, normalized_text
+
+
+def normalize_gateway_payload(payload):
+    """Normalize outbound gateway payloads once so every UI surface stays in Simplified Chinese."""
+    return normalize_simplified_chinese_payload(payload)
+
+
 def build_demo_audio_request(session_id: str, input_dir: str | None) -> dict:
     return {
         "session_id": session_id,
@@ -197,8 +213,10 @@ def build_demo_audio_request(session_id: str, input_dir: str | None) -> dict:
 
 def build_subtitle_from_audio_segment(session_id: str, index: int, segment: dict) -> dict:
     """Reuse one normalization path so all M6 transcript items look like demo subtitles."""
-    speaker = str(segment.get("speaker_label") or segment.get("speaker") or "Unknown")
-    text = str(segment.get("corrected_text") or segment.get("text") or "").strip()
+    speaker, text = normalize_speaker_and_text(
+        str(segment.get("speaker_label") or segment.get("speaker") or "Unknown"),
+        str(segment.get("corrected_text") or segment.get("text") or ""),
+    )
     start_time = parse_timestamp_to_seconds(segment.get("start_time"), float(index))
     return {
         "id": f"{session_id}_{index}_{segment.get('source_channel', 'audio')}",
@@ -272,13 +290,12 @@ def parse_timestamp_to_seconds(value, fallback: float) -> float:
 
 def append_sentiment_turn(sentiment_turns_ref: dict, raw_turn: dict):
     # Centralize turn normalization so demo/realtime paths share identical M4 input format.
-    text = str(raw_turn.get("corrected_text") or raw_turn.get("text") or "").strip()
+    speaker, text = normalize_speaker_and_text(
+        str(raw_turn.get("speaker_label") or raw_turn.get("speaker") or "Unknown"),
+        str(raw_turn.get("corrected_text") or raw_turn.get("text") or ""),
+    )
     if not text:
         return
-
-    speaker = str(raw_turn.get("speaker_label") or raw_turn.get("speaker") or "").strip()
-    if not speaker:
-        speaker = "Unknown"
 
     language = normalize_target_lang(str(raw_turn.get("language") or "zh"))
 
@@ -292,7 +309,7 @@ def append_sentiment_turn(sentiment_turns_ref: dict, raw_turn: dict):
 
     sentiment_turns_ref["items"].append(
         {
-            "text": str(raw_turn.get("text") or text),
+            "text": normalize_simplified_chinese_text(str(raw_turn.get("text") or text)),
             "corrected_text": text,
             "start_time": round(start_time, 3),
             "end_time": round(end_time, 3),
@@ -312,7 +329,7 @@ async def process_translation_async(
 ):
     """异步处理翻译，不阻塞字幕流"""
     try:
-        translation_res = await call_service(
+        translation_res = normalize_gateway_payload(await call_service(
             client,
             SERVICES["translation"],
             {
@@ -320,7 +337,7 @@ async def process_translation_async(
                 "text": text,
                 "target_lang": target_lang,
             },
-        )
+        ))
         await manager.send_message(
             {
                 "type": "translation",
@@ -384,7 +401,13 @@ async def stream_demo_data(
                 try:
                     data = json.loads(line[6:])
                     if data.get("type") == "subtitle":
-                        sub = data["data"]
+                        sub = normalize_gateway_payload(data["data"])
+                        speaker, text = normalize_speaker_and_text(
+                            str(sub.get("speaker") or "Unknown"),
+                            str(sub.get("text") or ""),
+                        )
+                        sub["speaker"] = speaker
+                        sub["text"] = text
                         # 为每条字幕生成唯一ID
                         subtitle_id = f"{session_id}_{hash(sub['text'] + str(sub.get('timestamp', '')))}"
                         sub["id"] = subtitle_id
@@ -488,7 +511,7 @@ async def stream_audio_directory_data(
         )
         return False
 
-    full_text_ref["text"] = audio_result.get("full_text") or ""
+    full_text_ref["text"] = normalize_simplified_chinese_text(audio_result.get("full_text") or "")
     needs_generated_full_text = not full_text_ref["text"].strip()
 
     translation_tasks: list[asyncio.Task] = []
@@ -636,8 +659,19 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                         and asr_result["text"]
                         and asr_result["text"] != "[未识别到有效语音]"
                     ):
-                        speaker = asr_result["speaker"]
-                        text = asr_result["text"]
+                        speaker, text = normalize_speaker_and_text(
+                            str(asr_result.get("speaker") or "Unknown"),
+                            str(asr_result.get("text") or ""),
+                        )
+                        corrected_text = normalize_simplified_chinese_text(
+                            str(asr_result.get("corrected_text") or text)
+                        )
+                        asr_result = {
+                            **asr_result,
+                            "speaker": speaker,
+                            "text": text,
+                            "corrected_text": corrected_text,
+                        }
 
                         # 立即向前端推送实时转录结果
                         await manager.send_message(
@@ -648,7 +682,7 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                             sentiment_turns_ref,
                             {
                                 "text": text,
-                                "corrected_text": asr_result.get("corrected_text"),
+                                "corrected_text": corrected_text,
                                 "speaker_label": speaker,
                                 "start_time": asr_result.get("start_time"),
                                 "end_time": asr_result.get("end_time"),
@@ -663,9 +697,9 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                             "target_lang": target_lang_ref["value"],
                         }
 
-                        translation_res = await call_service(
+                        translation_res = normalize_gateway_payload(await call_service(
                             client, SERVICES["translation"], translation_payload
-                        )
+                        ))
 
                         # 推送翻译结果
                         await manager.send_message(
@@ -679,10 +713,12 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                         )
 
                 elif message.get("type") == "end_meeting":
-                    full_text = (
+                    full_text = normalize_simplified_chinese_text(
+                        (
                         message.get("full_text")
                         or full_text_ref["text"]
                         or "这是一个模拟的完整会议记录..."
+                        )
                     )
                     summary_payload = {"session_id": session_id, "text": full_text}
                     action_payload = {"session_id": session_id, "text": full_text}
@@ -713,6 +749,10 @@ async def meeting_endpoint(websocket: WebSocket, session_id: str):
                             summary_task, action_task
                         )
                         sentiment_res = None
+
+                    summary_res = normalize_gateway_payload(summary_res)
+                    action_res = normalize_gateway_payload(action_res)
+                    sentiment_res = normalize_gateway_payload(sentiment_res)
 
                     await manager.send_message(
                         {

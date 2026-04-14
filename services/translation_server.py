@@ -8,6 +8,7 @@ import re
 # 将项目根目录加入 sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from core.llm_utils import call_llm
+from core.chinese_utils import normalize_simplified_chinese_text
 
 app = FastAPI(title="M3 - Translation & Action Extraction Service")
 
@@ -21,9 +22,16 @@ async def translate_text(content: TextContent):
     """
     多语言实时机器翻译 (MT)
     """
-    system_prompt = f"你是一个专业的同声传译员。请将以下文本翻译成{content.target_lang}。只输出翻译结果。"
+    target_lang = content.target_lang.lower().split('-')[0].split('_')[0]
+    normalized_target = "简体中文" if target_lang == "zh" else content.target_lang
+    system_prompt = (
+        f"你是一个专业的同声传译员。请将以下文本翻译成{normalized_target}。"
+        "如果输出中文，请统一使用简体中文。只输出翻译结果。"
+    )
     
-    translated_text = call_llm(system_prompt=system_prompt, user_prompt=content.text)
+    translated_text = normalize_simplified_chinese_text(
+        call_llm(system_prompt=system_prompt, user_prompt=content.text)
+    )
         
     return {
         "status": "success",
@@ -64,9 +72,13 @@ async def extract_actions(content: TextContent):
 
 请以 Markdown 列表形式输出所有行动项。"""
 
-    actions_result = call_llm(system_prompt=system_prompt, user_prompt=content.text)
+    actions_result = call_llm(
+        system_prompt=system_prompt + "\n\n如果输出中文，请统一使用简体中文。",
+        user_prompt=normalize_simplified_chinese_text(content.text),
+    )
 
     # 尝试解析行动项为结构化数据
+    actions_result = normalize_simplified_chinese_text(actions_result)
     parsed_actions = parse_action_items(actions_result)
 
     return {

@@ -6,14 +6,14 @@
 
     <div class="sentiment-content" v-if="sentiment">
       <div class="overview-grid">
-        <div class="overview-card">
+        <div class="overview-card turns-card">
           <p class="metric-label">发言轮次</p>
           <p class="metric-value">{{ sentiment.overall_summary.total_turns }}</p>
         </div>
 
-        <div class="overview-card">
+        <div class="overview-card atmosphere-card">
           <p class="metric-label">会议氛围</p>
-          <p class="metric-value" :class="atmosphereTone">
+          <p class="metric-value atmosphere-value" :class="atmosphereTone">
             {{ sentiment.overall_summary.atmosphere }}
           </p>
         </div>
@@ -121,6 +121,7 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   box-shadow: var(--shadow-card);
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: var(--meeting-panel-min-height);
 }
 
@@ -137,6 +138,8 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
 .sentiment-content {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
   gap: 18px;
 }
 
@@ -152,7 +155,7 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
 
 .overview-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(120px, 0.7fr) minmax(220px, 1.3fr);
   gap: 12px;
 }
 
@@ -161,6 +164,14 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 12px;
+  min-width: 0;
+}
+
+.turns-card {
+  max-width: 180px;
+}
+
+.atmosphere-card {
   min-width: 0;
 }
 
@@ -175,8 +186,11 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   font-size: 1.2rem;
   font-weight: 600;
   line-height: 1.3;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+}
+
+.atmosphere-value {
+  white-space: nowrap;
+  overflow: visible;
 }
 
 .tone-positive {

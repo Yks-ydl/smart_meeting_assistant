@@ -21,3 +21,4 @@ sounddevice
 soundfile
 scipy
 httpx
+opencc-python-reimplemented

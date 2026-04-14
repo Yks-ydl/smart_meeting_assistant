@@ -17,6 +17,7 @@ import traceback
 
 # 将项目根目录加入 sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from core.chinese_utils import normalize_simplified_chinese_text
 from core.llm_utils import call_llm
 from core.text_utils import (
     clean_meeting_text,
@@ -125,6 +126,8 @@ def _llm_summarize(text: str) -> str:
 
     system_prompt = """你是一个专业的智能会议助手。你的任务是对输入的会议记录进行整理，生成结构清晰的会议纪要。
 
+如果输出中文，请统一使用简体中文。
+
 请按以下四个板块输出：
 
 ## 会议主旨
@@ -165,6 +168,8 @@ def _hybrid_summarize(text: str) -> str:
 
 请基于原始会议记录，参考初步摘要，生成一份更准确、更完整、结构清晰的最终会议纪要。
 
+如果输出中文，请统一使用简体中文。
+
 请按以下四个板块输出：
 
 ## 会议主旨
@@ -202,7 +207,7 @@ async def generate_summary(content: MeetingContent):
     阶段二：大模型精炼润色与结构化
     """
     try:
-        summary_text = _hybrid_summarize(content.text)
+        summary_text = normalize_simplified_chinese_text(_hybrid_summarize(content.text))
         structured = format_structured_summary(summary_text)
 
         return {

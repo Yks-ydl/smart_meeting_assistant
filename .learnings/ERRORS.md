@@ -64,4 +64,8 @@ Prefer sending a follow-up command to an existing terminal with an explicit `Set
 - Reproducible: yes
 - Related Files: frontend/package.json
 
+### Follow-up
+
+- 2026-04-14: The same cwd drift also caused `python -m pytest tests/test_gateway_demo_source_config.py -v` to run from the `frontend/` directory and fail with `file or directory not found`. Use an explicit repo-root `Push-Location` (or equivalent) for backend test commands in this worktree.
+
 ---
