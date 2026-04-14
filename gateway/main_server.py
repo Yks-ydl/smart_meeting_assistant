@@ -391,7 +391,7 @@ def build_directory_pipeline_request(message: dict) -> DirectoryPipelineRequest:
         glob_pattern=(
             str(message.get("glob_pattern")).strip()
             if message.get("glob_pattern") is not None and str(message.get("glob_pattern")).strip()
-            else "*.m4a"
+            else DEFAULT_AUDIO_GLOB_PATTERN
         ),
         target_lang=normalize_target_lang(message.get("target_lang")),
         enable_translation=coerce_bool(message.get("enable_translation"), True),

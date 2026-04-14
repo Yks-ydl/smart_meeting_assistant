@@ -91,7 +91,7 @@ const isLoading = ref(false)
 const localConfig = reactive<MeetingConfig>({
   meetingId: '',
   inputDir: '',
-  globPattern: '*.m4a',
+  globPattern: '*',
   language: 'zh',
   translationEnabled: true,
   targetLanguage: 'en',

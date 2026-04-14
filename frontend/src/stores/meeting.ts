@@ -31,7 +31,7 @@ const duration = ref(0);
 const config = ref<MeetingConfig>({
   meetingId: "",
   inputDir: "",
-  globPattern: "*.m4a",
+  globPattern: "*",
   language: "zh",
   translationEnabled: true,
   targetLanguage: "en",
@@ -198,7 +198,8 @@ function buildPipelineStartRequest(): PipelineStartRequest {
   return {
     sessionId,
     inputDir: config.value.inputDir.trim() || undefined,
-    globPattern: config.value.globPattern.trim() || "*.m4a",
+    // Match the documented gateway default so hidden UI config still discovers any supported suffix.
+    globPattern: config.value.globPattern.trim() || "*",
     targetLang: normalizeTargetLanguage(config.value.targetLanguage),
     enableTranslation: config.value.translationEnabled,
     enableActions: config.value.actionEnabled,

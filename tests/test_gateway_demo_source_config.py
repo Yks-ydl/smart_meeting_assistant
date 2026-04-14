@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from gateway.demo_source import resolve_meeting_demo_source, use_vcsum_demo_source
 from gateway.main_server import (
+    build_directory_pipeline_request,
     build_demo_audio_request,
     resolve_demo_audio_input_dir,
     resolve_project_root,
@@ -52,3 +53,9 @@ class GatewayDemoSourceConfigTest(unittest.TestCase):
         self.assertEqual(Path(request["input_dir"]), resolve_project_root() / "meeting-audio")
         self.assertEqual(request["glob_pattern"], "*.wav")
         self.assertTrue(request["recursive"])
+
+    def test_directory_pipeline_request_defaults_to_supported_suffix_discovery(self) -> None:
+        request = build_directory_pipeline_request({"session_id": "meeting-demo"})
+
+        self.assertEqual(request.session_id, "meeting-demo")
+        self.assertEqual(request.glob_pattern, "*")

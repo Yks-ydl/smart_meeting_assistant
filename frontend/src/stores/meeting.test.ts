@@ -106,4 +106,16 @@ describe('useMeetingStore websocket lifecycle', () => {
     expect(meetingApiMock.connect).toHaveBeenCalledTimes(2)
     expect(meetingApiMock.start).toHaveBeenCalledTimes(2)
   })
+
+  test('uses the wildcard audio glob by default when the directory fields are hidden', async () => {
+    const store = await loadStore()
+
+    await store.startMeeting()
+
+    expect(meetingApiMock.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        globPattern: '*',
+      }),
+    )
+  })
 })
