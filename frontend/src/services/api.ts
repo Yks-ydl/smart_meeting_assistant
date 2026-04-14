@@ -1,23 +1,7 @@
 type MessageHandler = (data: unknown) => void;
 type ConnectionHandler = () => void;
 
-interface MeetingStartedData {
-  meeting_id: string;
-  mode: string;
-  start_time: string;
-}
-
-interface MeetingEndReportData {
-  summary: { summary?: string; structured?: Record<string, unknown> };
-  actions: {
-    action_items?: Array<{
-      task: string;
-      assignee?: string;
-      deadline?: string;
-    }>;
-  };
-  full_text: string;
-}
+import type { PipelineStartRequest } from "../types";
 
 class WebSocketService {
   private ws: WebSocket | null = null;
@@ -26,13 +10,11 @@ class WebSocketService {
   private closeHandlers: ConnectionHandler[] = [];
   private errorHandlers: ((error: unknown) => void)[] = [];
   private isConnected = false;
-  private sessionId: string = `session_${Date.now()}`;
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const wsUrl = `ws://${window.location.hostname}:8000/ws/meeting/${this.sessionId}`;
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const wsUrl = `${protocol}://${window.location.hostname}:8000/ws/pipeline/dir`;
       console.log(`[WebSocket] Connecting to ${wsUrl}`);
 
       this.ws = new WebSocket(wsUrl);
@@ -40,7 +22,6 @@ class WebSocketService {
       this.ws.onopen = () => {
         console.log("[WebSocket] Connected");
         this.isConnected = true;
-        this.reconnectAttempts = 0;
         this.openHandlers.forEach((h) => h());
         resolve();
       };
@@ -88,18 +69,15 @@ class WebSocketService {
     }
   }
 
-  startMeeting(
-    mode: "demo" | "realtime" = "demo",
-    inputDir?: string,
-    targetLang?: "zh" | "en" | "ja",
-    sentimentEnabled: boolean = true,
-  ): void {
+  startMeeting(request: PipelineStartRequest): void {
     this.send({
-      type: "start_meeting",
-      mode,
-      input_dir: inputDir,
-      target_lang: targetLang,
-      sentiment_enabled: sentimentEnabled,
+      session_id: request.sessionId,
+      input_dir: request.inputDir,
+      glob_pattern: request.globPattern,
+      target_lang: request.targetLang,
+      enable_translation: request.enableTranslation,
+      enable_actions: request.enableActions,
+      enable_sentiment: request.enableSentiment,
     });
   }
 
@@ -134,12 +112,7 @@ export const api = {
   meeting: {
     connect: () => wsService.connect(),
     disconnect: () => wsService.disconnect(),
-    start: (
-      mode: "demo" | "realtime" = "demo",
-      inputDir?: string,
-      targetLang?: "zh" | "en" | "ja",
-      sentimentEnabled?: boolean,
-    ) => wsService.startMeeting(mode, inputDir, targetLang, sentimentEnabled),
+    start: (request: PipelineStartRequest) => wsService.startMeeting(request),
     end: () => wsService.endMeeting(),
     onMessage: (handler: MessageHandler) => wsService.onMessage(handler),
     onOpen: (handler: ConnectionHandler) => wsService.onOpen(handler),

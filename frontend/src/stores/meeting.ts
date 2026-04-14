@@ -1,6 +1,10 @@
 import { ref, computed } from "vue";
 import type {
+  ActionItemDraft,
   MeetingConfig,
+  PipelineStartRequest,
+  RuntimeActionWindow,
+  RuntimeInfoEntry,
   SubtitleEntry,
   SentimentData,
   MeetingSummary,
@@ -10,7 +14,10 @@ import {
   buildActionItems,
   deriveKeyPoints,
   extractAnalysisResultPayloads,
+  mergeActionItemCollections,
   normalizeSentimentReport,
+  normalizePipelineSubtitle,
+  normalizeRuntimeActionWindow,
   normalizeTargetLanguage,
 } from "./meetingMessageUtils";
 
@@ -22,14 +29,28 @@ const startTime = ref<string | null>(null);
 const duration = ref(0);
 const config = ref<MeetingConfig>({
   meetingId: "",
+  inputDir: "",
+  globPattern: "*.m4a",
   language: "zh",
   translationEnabled: true,
   targetLanguage: "en",
+  actionEnabled: true,
   sentimentEnabled: true,
 });
 
 const subtitles = ref<SubtitleEntry[]>([]);
 const currentSentiment = ref<SentimentData | null>(null);
+const isFinalizing = ref(false);
+const runtimeInfoMessages = ref<RuntimeInfoEntry[]>([]);
+const runtimeActionWindows = ref<RuntimeActionWindow[]>([]);
+const realtimeSentiments = ref<{
+  id: string;
+  speaker: string;
+  label: string;
+  signal?: string;
+  explanation?: string;
+  timestamp?: number;
+}[]>([]);
 const summary = ref<MeetingSummary | null>(null);
 const summaryStatus = ref<SummaryStatus>("idle");
 const summaryError = ref<string | null>(null);
@@ -55,6 +76,32 @@ const participantCount = computed(() => {
 
 let durationTimer: ReturnType<typeof setInterval> | null = null;
 
+function pushRuntimeInfoMessage(message: string) {
+  const normalized = message.trim();
+  if (!normalized) {
+    return;
+  }
+
+  runtimeInfoMessages.value = [
+    ...runtimeInfoMessages.value.slice(-9),
+    {
+      id: `${Date.now()}-${runtimeInfoMessages.value.length}`,
+      message: normalized,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+}
+
+function applyAsrPayload(raw: unknown) {
+  const subtitle = normalizePipelineSubtitle(raw);
+  if (!subtitle) {
+    return;
+  }
+
+  subtitles.value.push(subtitle);
+  liveError.value = null;
+}
+
 function applyTranslationPayload(raw: unknown) {
   const transData = raw as { subtitle_id?: string; translated_text?: string };
   if (
@@ -78,7 +125,6 @@ function applyTranslationPayload(raw: unknown) {
 function applySentimentPayload(raw: unknown) {
   const report = normalizeSentimentReport(raw);
   if (!report) {
-    sentimentStatus.value = "error";
     return;
   }
 
@@ -86,16 +132,40 @@ function applySentimentPayload(raw: unknown) {
   sentimentStatus.value = "ready";
 }
 
-async function startMeeting(
-  mode: "demo" | "realtime" = "demo",
-  inputDir?: string,
-) {
+function applyActionWindowPayload(raw: unknown) {
+  const actionWindow = normalizeRuntimeActionWindow(raw);
+  if (!actionWindow) {
+    return;
+  }
+
+  runtimeActionWindows.value.push(actionWindow);
+}
+
+function buildFinalActionItems(finalActionsPayload: unknown): ActionItemDraft[] {
+  return mergeActionItemCollections(runtimeActionWindows.value, finalActionsPayload);
+}
+
+function buildPipelineStartRequest(): PipelineStartRequest {
+  const sessionId = config.value.meetingId.trim() || `session-${Date.now()}`;
+  config.value.meetingId = sessionId;
+
+  return {
+    sessionId,
+    inputDir: config.value.inputDir.trim() || undefined,
+    globPattern: config.value.globPattern.trim() || "*.m4a",
+    targetLang: normalizeTargetLanguage(config.value.targetLanguage),
+    enableTranslation: config.value.translationEnabled,
+    enableActions: config.value.actionEnabled,
+    enableSentiment: config.value.sentimentEnabled,
+  };
+}
+
+async function startMeeting() {
   try {
-    if (isRunning.value) {
-      console.log(`[Meeting] Ending previous meeting before starting new one`);
-      await endMeeting();
+    if (isRunning.value || isFinalizing.value) {
+      console.log(`[Meeting] Resetting previous meeting state before starting new one`);
+      disconnect();
     }
-    disconnect();
 
     clearSubtitles();
     summary.value = null;
@@ -103,9 +173,26 @@ async function startMeeting(
     summaryError.value = null;
     sentimentStatus.value = "idle";
     liveError.value = null;
+    isFinalizing.value = false;
 
     console.log(`[Meeting] Connecting to gateway...`);
     await api.meeting.connect();
+
+    const request = buildPipelineStartRequest();
+    isRunning.value = true;
+    startTime.value = new Date().toISOString();
+    duration.value = 0;
+    runtimeInfoMessages.value = [];
+    runtimeActionWindows.value = [];
+    realtimeSentiments.value = [];
+    sentimentStatus.value = config.value.sentimentEnabled ? "waiting" : "idle";
+
+    if (durationTimer) {
+      clearInterval(durationTimer);
+    }
+    durationTimer = setInterval(() => {
+      duration.value++;
+    }, 1000);
 
     api.meeting.onError((error) => {
       console.error("[Meeting] WebSocket error:", error);
@@ -113,40 +200,28 @@ async function startMeeting(
     });
 
     api.meeting.onClose(() => {
-      if (isRunning.value) {
+      if (isRunning.value || isFinalizing.value) {
         liveError.value = "网关连接已断开，请重新开始会议。";
+        isRunning.value = false;
+        isFinalizing.value = false;
       }
     });
 
     api.meeting.onMessage((message) => {
-      const msg = message as { type: string; data: unknown };
+      const msg = message as {
+        type: string;
+        data?: unknown;
+        message?: string;
+      };
 
-      if (msg.type === "meeting_started") {
-        const data = msg.data as {
-          session_id?: string;
-          meeting_id?: string;
-          mode?: string;
-          start_time?: string;
-        };
-        isRunning.value = true;
-        startTime.value = data.start_time || new Date().toISOString();
-        config.value.meetingId = data.meeting_id || data.session_id || "";
-        duration.value = 0;
-        summaryStatus.value = "idle";
-        summaryError.value = null;
-        sentimentStatus.value = config.value.sentimentEnabled
-          ? "waiting"
-          : "idle";
-        liveError.value = null;
-
-        durationTimer = setInterval(() => {
-          duration.value++;
-        }, 1000);
-        console.log(`[Meeting] Started: ${config.value.meetingId}`);
+      if (msg.type === "info") {
+        pushRuntimeInfoMessage(msg.message || "");
       } else if (msg.type === "subtitle") {
         const sub = msg.data as SubtitleEntry;
         subtitles.value.push(sub);
         liveError.value = null;
+      } else if (msg.type === "asr_result") {
+        applyAsrPayload(msg.data);
       } else if (msg.type === "translation") {
         applyTranslationPayload(msg.data);
       } else if (msg.type === "sentiment") {
@@ -159,6 +234,8 @@ async function startMeeting(
         if (payload.sentimentPayload) {
           applySentimentPayload(payload.sentimentPayload);
         }
+      } else if (msg.type === "action_result") {
+        applyActionWindowPayload(msg.data);
       } else if (msg.type === "stream_complete") {
         console.log(`[Meeting] Stream complete`);
       } else if (msg.type === "meeting_end_report") {
@@ -182,7 +259,7 @@ async function startMeeting(
           summaryText,
           reportData.summary.structured,
         );
-        const actionItems = buildActionItems(reportData.actions);
+        const actionItems = buildFinalActionItems(reportData.actions);
 
         summary.value = {
           id: config.value.meetingId,
@@ -194,7 +271,7 @@ async function startMeeting(
             id: `action_${i}`,
             task: item.task,
             assignee: item.assignee,
-            dueDate: item.deadline,
+            dueDate: item.dueDate,
             priority: "medium" as const,
             status: "pending" as const,
           })),
@@ -204,6 +281,8 @@ async function startMeeting(
           duration: duration.value,
           generatedAt: new Date().toISOString(),
         };
+        isRunning.value = false;
+        isFinalizing.value = false;
         summaryStatus.value = "ready";
         summaryError.value = null;
 
@@ -213,38 +292,40 @@ async function startMeeting(
 
         console.log(`[Meeting] End report received`);
       } else if (msg.type === "error") {
-        const errData = msg.data as { message?: string };
-        console.error(`[Meeting] Error: ${errData.message}`);
-        liveError.value = errData.message || "实时处理异常";
-        if (summaryStatus.value === "loading") {
+        const errData = msg.data as { message?: string } | undefined;
+        const errorMessage = msg.message || errData?.message || "实时处理异常";
+        console.error(`[Meeting] Error: ${errorMessage}`);
+        liveError.value = errorMessage;
+        if (summaryStatus.value === "loading" || isFinalizing.value) {
+          isRunning.value = false;
+          isFinalizing.value = false;
           summaryStatus.value = "error";
-          summaryError.value = errData.message || "会议总结生成失败";
+          summaryError.value = errorMessage || "会议总结生成失败";
         }
       }
     });
 
-    api.meeting.start(
-      mode,
-      inputDir,
-      normalizeTargetLanguage(config.value.targetLanguage),
-      config.value.sentimentEnabled,
-    );
+    api.meeting.start(request);
   } catch (error) {
     console.error("Failed to start meeting:", error);
     liveError.value = "无法连接网关，请确认服务是否启动。";
+    isRunning.value = false;
+    isFinalizing.value = false;
   }
 }
 
 async function endMeeting() {
   try {
-    summary.value = null;
+    if (!isRunning.value || isFinalizing.value) {
+      return;
+    }
+
     summaryStatus.value = "loading";
     summaryError.value = null;
     liveError.value = null;
+    isFinalizing.value = true;
+    pushRuntimeInfoMessage("正在基于已输出内容生成会议总结...");
     api.meeting.end();
-
-    isRunning.value = false;
-    startTime.value = null;
 
     if (durationTimer) {
       clearInterval(durationTimer);
@@ -262,6 +343,7 @@ function disconnect() {
   }
   api.meeting.disconnect();
   isRunning.value = false;
+  isFinalizing.value = false;
   startTime.value = null;
 }
 
@@ -276,17 +358,24 @@ function clearSubtitles() {
   subtitles.value = [];
   currentSentiment.value = null;
   liveError.value = null;
+  runtimeInfoMessages.value = [];
+  runtimeActionWindows.value = [];
+  realtimeSentiments.value = [];
 }
 
 export function useMeetingStore() {
   return {
     isRunning,
+    isFinalizing,
     startTime,
     duration,
     formattedDuration,
     participantCount,
     config,
     subtitles,
+    runtimeInfoMessages,
+    runtimeActionWindows,
+    realtimeSentiments,
     currentSentiment,
     sentimentStatus,
     liveError,

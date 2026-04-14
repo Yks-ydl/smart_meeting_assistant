@@ -1,8 +1,11 @@
 export interface MeetingConfig {
   meetingId: string;
+  inputDir: string;
+  globPattern: string;
   language: string;
   translationEnabled: boolean;
   targetLanguage: string;
+  actionEnabled: boolean;
   sentimentEnabled: boolean;
 }
 
@@ -20,6 +23,47 @@ export interface SubtitleEntry {
   translation?: string;
   timestamp: string;
   language: string;
+  startTime?: number;
+  endTime?: number;
+  source?: string;
+}
+
+export interface PipelineStartRequest {
+  sessionId: string;
+  inputDir?: string;
+  globPattern: string;
+  targetLang: "zh" | "en" | "ja";
+  enableTranslation: boolean;
+  enableActions: boolean;
+  enableSentiment: boolean;
+}
+
+export interface RuntimeInfoEntry {
+  id: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface ActionItemDraft {
+  task: string;
+  assignee?: string;
+  dueDate?: string;
+}
+
+export interface RuntimeActionWindow {
+  id: string;
+  windowStart: number;
+  windowEnd: number;
+  items: ActionItemDraft[];
+}
+
+export interface RealtimeSentimentEntry {
+  id: string;
+  speaker: string;
+  label: string;
+  signal?: string;
+  explanation?: string;
+  timestamp?: number;
 }
 
 export interface SentimentData {

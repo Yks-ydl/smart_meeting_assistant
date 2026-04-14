@@ -2,12 +2,12 @@
   <div class="control-panel">
     <div class="panel-header">
       <h2>会议控制</h2>
-      <div class="status-indicator" :class="{ active: isRunning }">
-        {{ isRunning ? '进行中' : '未开始' }}
+      <div class="status-indicator" :class="{ active: isRunning || isFinalizing }">
+        {{ statusText }}
       </div>
     </div>
 
-    <div class="meeting-info" v-if="isRunning">
+    <div class="meeting-info" v-if="isRunning || isFinalizing">
       <div class="info-item">
         <span class="label">会议时长</span>
         <span class="value duration">{{ formattedDuration }}</span>
@@ -19,18 +19,30 @@
     </div>
 
     <div class="control-buttons">
-      <button v-if="!isRunning" class="btn btn-primary btn-start" @click="handleStart" :disabled="isLoading">
+      <button v-if="!isRunning && !isFinalizing" class="btn btn-primary btn-start" @click="handleStart" :disabled="isLoading">
         <span class="icon">▶</span>
         开始会议
       </button>
-      <button v-else class="btn btn-danger btn-end" @click="handleEnd" :disabled="isLoading">
+      <button v-else class="btn btn-danger btn-end" @click="handleEnd" :disabled="isLoading || isFinalizing">
         <span class="icon">■</span>
-        结束会议
+        {{ isFinalizing ? '正在结束...' : '结束会议' }}
       </button>
     </div>
 
     <div class="config-section">
       <h3>会议配置</h3>
+
+      <div class="config-item">
+        <label>音频目录</label>
+        <input v-model="localConfig.inputDir" type="text" @change="handleConfigChange"
+          placeholder="留空时使用网关默认 audio 目录" />
+        <p class="config-hint">目录路径以 Gateway 所在机器为准</p>
+      </div>
+
+      <div class="config-item">
+        <label>文件匹配模式</label>
+        <input v-model="localConfig.globPattern" type="text" @change="handleConfigChange" placeholder="例如 *.m4a" />
+      </div>
 
       <div class="config-item">
         <label>源语言</label>
@@ -54,6 +66,13 @@
 
       <div class="config-item">
         <label class="checkbox-label">
+          <input type="checkbox" v-model="localConfig.actionEnabled" @change="handleConfigChange" />
+          <span>启用待办提取</span>
+        </label>
+      </div>
+
+      <div class="config-item">
+        <label class="checkbox-label">
           <input type="checkbox" v-model="localConfig.sentimentEnabled" @change="handleConfigChange" />
           <span>启用情感分析</span>
         </label>
@@ -71,6 +90,7 @@ import { isTargetLanguageLocked } from '../stores/meetingMessageUtils'
 
 const {
   isRunning,
+  isFinalizing,
   formattedDuration,
   participantCount,
   config,
@@ -82,9 +102,12 @@ const {
 const isLoading = ref(false)
 const localConfig = reactive<MeetingConfig>({
   meetingId: '',
+  inputDir: '',
+  globPattern: '*.m4a',
   language: 'zh',
   translationEnabled: true,
   targetLanguage: 'en',
+  actionEnabled: true,
   sentimentEnabled: true,
 })
 
@@ -101,10 +124,12 @@ const targetLanguageOptions = [
 ]
 
 const targetLanguageLocked = computed(() => isTargetLanguageLocked(isRunning.value))
-
-const emit = defineEmits<{
-  (e: 'meeting-ended'): void
-}>()
+const statusText = computed(() => {
+  if (isFinalizing.value) {
+    return '结束中'
+  }
+  return isRunning.value ? '进行中' : '未开始'
+})
 
 async function handleStart() {
   isLoading.value = true
@@ -119,7 +144,6 @@ async function handleEnd() {
   isLoading.value = true
   try {
     await endMeeting()
-    emit('meeting-ended')
   } finally {
     isLoading.value = false
   }
@@ -277,6 +301,21 @@ watch(
   margin-bottom: 8px;
   font-size: 0.95rem;
   color: var(--text-secondary);
+}
+
+.config-item input[type="text"] {
+  width: 100%;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text-primary);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.95rem;
+}
+
+.config-item input[type="text"]:focus {
+  outline: 2px solid rgba(14, 165, 233, 0.18);
+  border-color: var(--primary);
 }
 
 .config-hint {

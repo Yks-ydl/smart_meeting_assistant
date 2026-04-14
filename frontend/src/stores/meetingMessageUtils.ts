@@ -1,6 +1,11 @@
 export type ShortLanguageCode = "zh" | "en" | "ja";
 
-import type { SentimentData } from "../types";
+import type {
+  ActionItemDraft,
+  RuntimeActionWindow,
+  SentimentData,
+  SubtitleEntry,
+} from "../types";
 
 type ActionItemLike = {
   task: string;
@@ -48,6 +53,39 @@ export function resolveSubtitleTranslationDisplay(
 
 export function isTargetLanguageLocked(isMeetingRunning: boolean): boolean {
   return isMeetingRunning;
+}
+
+export function normalizePipelineSubtitle(
+  value: unknown,
+): SubtitleEntry | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const text = toCleanString(value.corrected_text) || toCleanString(value.text);
+  const speaker = toCleanString(value.speaker) || toCleanString(value.speaker_label);
+  const startTime = toFiniteNumber(value.start_time);
+  const endTime = toFiniteNumber(value.end_time);
+  const timestamp =
+    toCleanString(value.timestamp) ||
+    (startTime !== null ? startTime.toFixed(3) : "0.000");
+
+  if (!text || !speaker) {
+    return null;
+  }
+
+  return {
+    id:
+      toCleanString(value.id) ||
+      `${speaker}-${timestamp}-${text.slice(0, 24)}`,
+    speaker,
+    text,
+    timestamp,
+    language: normalizeTargetLanguage(toCleanString(value.language) || "zh"),
+    startTime: startTime ?? undefined,
+    endTime: endTime ?? undefined,
+    source: toCleanString(value.source) || undefined,
+  };
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -281,6 +319,28 @@ function normalizeActionList(list: unknown): ActionItemLike[] {
   return normalized;
 }
 
+function toActionItemDraft(item: ActionItemLike): ActionItemDraft {
+  return {
+    task: item.task,
+    assignee: item.assignee,
+    dueDate: item.deadline,
+  };
+}
+
+function buildActionItemKey(item: ActionItemLike | ActionItemDraft): string {
+  const dueDate = "dueDate" in item
+    ? item.dueDate
+    : "deadline" in item
+      ? item.deadline
+      : undefined;
+
+  return [
+    toCleanString(item.task).toLowerCase(),
+    toCleanString(item.assignee).toLowerCase(),
+    toCleanString(dueDate).toLowerCase(),
+  ].join("|");
+}
+
 export function buildActionItems(actions: unknown): ActionItemLike[] {
   if (!isObject(actions)) {
     return [];
@@ -305,6 +365,49 @@ export function buildActionItems(actions: unknown): ActionItemLike[] {
     .split("\n")
     .map((line) => parseLineActionItem(line))
     .filter((item): item is ActionItemLike => item !== null);
+}
+
+export function normalizeRuntimeActionWindow(
+  payload: unknown,
+): RuntimeActionWindow | null {
+  if (!isObject(payload)) {
+    return null;
+  }
+
+  const windowStart = toFiniteNumber(payload.window_start);
+  const windowEnd = toFiniteNumber(payload.window_end);
+  const items = buildActionItems(payload.actions).map(toActionItemDraft);
+
+  if (windowStart === null || windowEnd === null || items.length === 0) {
+    return null;
+  }
+
+  return {
+    id: `${windowStart.toFixed(3)}-${windowEnd.toFixed(3)}-${items.length}`,
+    windowStart,
+    windowEnd,
+    items,
+  };
+}
+
+export function mergeActionItemCollections(
+  runtimeWindows: RuntimeActionWindow[],
+  finalActions: unknown,
+): ActionItemDraft[] {
+  const merged = [
+    ...runtimeWindows.flatMap((window) => window.items),
+    ...buildActionItems(finalActions).map(toActionItemDraft),
+  ];
+
+  const seen = new Set<string>();
+  return merged.filter((item) => {
+    const key = buildActionItemKey(item);
+    if (!key || seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 export function deriveKeyPoints(
@@ -341,11 +444,18 @@ export function extractAnalysisResultPayloads(data: unknown): {
     return {};
   }
 
+  const subtitleId = toCleanString(data.subtitle_id);
+
   const sentimentPayload = isObject(data.sentiment)
     ? data.sentiment
     : undefined;
   const translationPayload = isObject(data.translation)
-    ? data.translation
+    ? {
+        ...(subtitleId && !toCleanString(data.translation.subtitle_id)
+          ? { subtitle_id: subtitleId }
+          : {}),
+        ...data.translation,
+      }
     : undefined;
 
   return {

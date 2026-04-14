@@ -6,19 +6,19 @@
         <h1>智能会议助手</h1>
       </div>
       <div class="header-status">
-        <span class="status-dot" :class="{ active: isRunning }"></span>
-        <span class="status-text">{{ isRunning ? '会议进行中' : '等待开始' }}</span>
+        <span class="status-dot" :class="{ active: isRunning || isFinalizing }"></span>
+        <span class="status-text">{{ statusText }}</span>
       </div>
     </header>
 
     <main class="app-main">
       <div class="dashboard-grid">
         <aside class="sidebar">
-          <ControlPanel @meeting-ended="handleMeetingEnded" />
+          <ControlPanel />
         </aside>
 
         <section class="content-area">
-          <div class="realtime-section" v-if="isRunning">
+          <div class="realtime-section" v-if="isRunning || isFinalizing">
             <div class="panel-row">
               <SubtitlePanel />
             </div>
@@ -63,25 +63,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useMeetingStore } from './stores/meeting'
 import ControlPanel from './components/ControlPanel.vue'
 import SubtitlePanel from './components/SubtitlePanel.vue'
 import SentimentPanel from './components/SentimentPanel.vue'
 import SummaryPanel from './components/SummaryPanel.vue'
 
-const { isRunning, config } = useMeetingStore()
+const { isRunning, isFinalizing, config, summary, summaryStatus } = useMeetingStore()
 
-const showSummary = ref(false)
-
-function handleMeetingEnded() {
-  showSummary.value = true
-}
-
-watch(isRunning, (running) => {
-  if (running) {
-    showSummary.value = false
+const showSummary = computed(() => {
+  if (isRunning.value || isFinalizing.value) {
+    return false
   }
+  return summaryStatus.value !== 'idle' || summary.value !== null
+})
+
+const statusText = computed(() => {
+  if (isFinalizing.value) {
+    return '会议结束中'
+  }
+  return isRunning.value ? '会议进行中' : '等待开始'
 })
 </script>
 
