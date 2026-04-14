@@ -7,6 +7,33 @@
       </div>
     </div>
 
+    <div class="runtime-strip" v-if="showRuntimeStrip">
+      <section class="runtime-card">
+        <div class="runtime-label">运行状态</div>
+        <p class="runtime-message">{{ runtimeMessage }}</p>
+      </section>
+
+      <section class="runtime-card" v-if="config.sentimentEnabled">
+        <div class="runtime-label">实时情感</div>
+        <div class="sentiment-chip-list" v-if="recentRealtimeSentiments.length > 0">
+          <div
+            v-for="entry in recentRealtimeSentiments"
+            :key="entry.id"
+            class="sentiment-chip"
+            :class="toneClass(entry.label)"
+          >
+            <span class="chip-speaker">{{ entry.speaker }}</span>
+            <span class="chip-label">{{ entry.label }}</span>
+            <span class="chip-signal" v-if="entry.signal">{{ entry.signal }}</span>
+            <span class="chip-time" v-if="entry.timestamp !== undefined">
+              {{ formatRealtimeTimestamp(entry.timestamp) }}
+            </span>
+          </div>
+        </div>
+        <p class="runtime-placeholder" v-else>等待实时情感...</p>
+      </section>
+    </div>
+
     <div class="subtitle-container" ref="containerRef">
       <div v-if="subtitles.length > 0" class="subtitle-list-shell">
         <div class="subtitle-list" :style="{ height: `${totalSize}px` }">
@@ -41,10 +68,10 @@
       <div v-else class="empty-state">
         <div class="empty-icon">💬</div>
         <p v-if="liveError" class="error-text">{{ liveError }}</p>
-        <p v-else-if="isRunning">会议进行中，等待字幕数据...</p>
+        <p v-else-if="isRunning || isFinalizing">会议进行中，等待字幕数据...</p>
         <p v-else>等待会议开始...</p>
         <p class="hint" v-if="liveError">请检查网关日志，以及 M6 音频输入服务或 VCSum 回退模式配置</p>
-        <p class="hint" v-else-if="isRunning">请确认目录音频可读取，网关正在推送字幕流</p>
+        <p class="hint" v-else-if="isRunning || isFinalizing">请确认目录音频可读取，网关正在推送字幕流</p>
         <p class="hint" v-else>字幕将在会议开始后实时显示</p>
       </div>
     </div>
@@ -57,7 +84,15 @@ import { useVirtualizer, type VirtualItem } from '@tanstack/vue-virtual'
 import { useMeetingStore } from '../stores/meeting'
 import { resolveSubtitleTranslationDisplay } from '../stores/meetingMessageUtils'
 
-const { subtitles, config, isRunning, liveError } = useMeetingStore()
+const {
+  subtitles,
+  config,
+  isRunning,
+  isFinalizing,
+  liveError,
+  realtimeSentiments,
+  runtimeInfoMessages,
+} = useMeetingStore()
 const containerRef = ref<HTMLDivElement | null>(null)
 
 type SubtitleWithTranslationState = {
@@ -113,6 +148,23 @@ const virtualRows = computed<VirtualSubtitleRow[]>(() =>
 )
 
 const totalSize = computed(() => rowVirtualizer.value.getTotalSize())
+const latestRuntimeInfo = computed(() => runtimeInfoMessages.value.at(-1) ?? null)
+const recentRealtimeSentiments = computed(() => realtimeSentiments.value.slice(-3).reverse())
+const showRuntimeStrip = computed(() =>
+  isRunning.value
+  || isFinalizing.value
+  || runtimeInfoMessages.value.length > 0
+  || (config.value.sentimentEnabled && realtimeSentiments.value.length > 0),
+)
+const runtimeMessage = computed(() => {
+  if (latestRuntimeInfo.value?.message) {
+    return latestRuntimeInfo.value.message
+  }
+  if (isFinalizing.value) {
+    return '正在基于已输出内容整理会后结果...'
+  }
+  return '等待网关状态消息...'
+})
 
 function measureSubtitleElement(
   element: Element | ComponentPublicInstance | null,
@@ -157,6 +209,24 @@ function formatTime(timestamp: string): string {
     minute: '2-digit',
     second: '2-digit',
   })
+}
+
+function formatRealtimeTimestamp(timestamp?: number): string {
+  if (typeof timestamp !== 'number') {
+    return ''
+  }
+  return formatAudioSeconds(String(timestamp)) || `${timestamp.toFixed(1)}s`
+}
+
+function toneClass(label: string): string {
+  const normalized = label.toLowerCase()
+  if (normalized.includes('positive')) {
+    return 'tone-positive'
+  }
+  if (normalized.includes('negative')) {
+    return 'tone-negative'
+  }
+  return 'tone-neutral'
 }
 
 watch(
@@ -214,6 +284,83 @@ watch(
   overflow-y: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+
+.runtime-strip {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+
+.runtime-card {
+  background: rgba(237, 243, 251, 0.82);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 12px 14px;
+  min-height: 84px;
+}
+
+.runtime-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.runtime-message,
+.runtime-placeholder {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.sentiment-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sentiment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  background: rgba(14, 165, 233, 0.08);
+  color: #075985;
+}
+
+.sentiment-chip.tone-positive {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0369a1;
+}
+
+.sentiment-chip.tone-negative {
+  background: rgba(220, 38, 38, 0.1);
+  color: #b91c1c;
+}
+
+.sentiment-chip.tone-neutral {
+  background: rgba(217, 119, 6, 0.1);
+  color: #b45309;
+}
+
+.chip-speaker {
+  font-weight: 600;
+}
+
+.chip-signal,
+.chip-time {
+  color: inherit;
+  opacity: 0.78;
 }
 
 .subtitle-container::-webkit-scrollbar {
@@ -319,5 +466,11 @@ watch(
 .error-text {
   color: #dc2626;
   font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .runtime-strip {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
