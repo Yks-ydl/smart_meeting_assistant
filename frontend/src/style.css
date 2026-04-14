@@ -2,6 +2,8 @@
   /* Shared tokens prevent duplicated color and typography definitions across components. */
   /* Shared panel height token keeps control and loading panels visually aligned. */
   --meeting-panel-min-height: 440px;
+  --result-panel-height: min(760px, calc(100vh - 170px));
+  --result-list-max-height: 280px;
   --primary: #0ea5e9;
   --primary-dark: #0284c7;
   --danger: #dc2626;

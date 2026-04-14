@@ -188,6 +188,7 @@ const statusText = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  min-height: 0;
 }
 
 .realtime-section {
@@ -210,7 +211,8 @@ const statusText = computed(() => {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 24px;
-  align-items: start;
+  align-items: stretch;
+  min-height: var(--result-panel-height);
 }
 
 .welcome-section {
@@ -294,6 +296,7 @@ const statusText = computed(() => {
 @media (max-width: 1200px) {
   .summary-panel-row {
     grid-template-columns: 1fr;
+    min-height: auto;
   }
 }
 

@@ -43,8 +43,11 @@
         </ul>
       </div>
 
-      <div class="summary-section">
-        <h4>行动项</h4>
+      <div class="summary-section action-section">
+        <div class="section-heading">
+          <h4>行动项</h4>
+          <span class="section-count" v-if="summary.actionItems.length > 0">{{ summary.actionItems.length }} 项</span>
+        </div>
         <div class="action-items" v-if="summary.actionItems.length > 0">
           <div v-for="item in summary.actionItems" :key="item.id" class="action-item"
             :class="`priority-${item.priority}`">
@@ -157,6 +160,10 @@ function renderMarkdown(text: string): string {
   color: var(--text-primary);
   border: 1px solid var(--border-color);
   box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  height: var(--result-panel-height);
+  overflow: hidden;
 }
 
 .panel-header {
@@ -183,9 +190,37 @@ function renderMarkdown(text: string): string {
 }
 
 .summary-content {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 24px;
+  flex: 1;
+  min-height: 0;
+}
+
+.summary-section {
+  min-height: 0;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-heading h4 {
+  margin: 0;
+}
+
+.section-count {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 4px 10px;
+  white-space: nowrap;
 }
 
 .summary-header {
@@ -223,6 +258,10 @@ function renderMarkdown(text: string): string {
   font-size: 1.05rem;
   font-weight: 600;
   color: var(--primary);
+}
+
+.section-heading > h4 {
+  margin: 0;
 }
 
 .summary-text {
@@ -276,6 +315,14 @@ function renderMarkdown(text: string): string {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
+  max-height: var(--result-list-max-height);
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.action-section {
+  min-height: 0;
 }
 
 .empty-actions {
@@ -375,7 +422,7 @@ function renderMarkdown(text: string): string {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: var(--meeting-panel-min-height);
+  flex: 1;
   color: var(--text-muted);
   text-align: center;
 }
@@ -385,7 +432,7 @@ function renderMarkdown(text: string): string {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: var(--meeting-panel-min-height);
+  flex: 1;
   text-align: center;
   color: var(--text-secondary);
 }
@@ -416,5 +463,17 @@ function renderMarkdown(text: string): string {
   font-size: 0.85rem;
   color: var(--text-secondary);
   margin-top: 8px;
+}
+
+@media (max-width: 1200px) {
+  .summary-panel {
+    height: auto;
+    min-height: var(--meeting-panel-min-height);
+  }
+
+  .summary-content {
+    display: flex;
+    flex-direction: column;
+  }
 }
 </style>
