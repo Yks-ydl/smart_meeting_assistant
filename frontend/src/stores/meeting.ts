@@ -12,7 +12,6 @@ import type {
 } from "../types";
 import { api } from "../services/api";
 import {
-  buildActionItems,
   deriveKeyPoints,
   extractAnalysisResultPayloads,
   mergeActionItemCollections,
@@ -43,6 +42,8 @@ const config = ref<MeetingConfig>({
 const subtitles = ref<SubtitleEntry[]>([]);
 const currentSentiment = ref<SentimentData | null>(null);
 const isFinalizing = ref(false);
+const keepRuntimeSurfaceVisible = ref(false);
+const hasTerminalReport = ref(false);
 const runtimeInfoMessages = ref<RuntimeInfoEntry[]>([]);
 const runtimeActionWindows = ref<RuntimeActionWindow[]>([]);
 const realtimeSentiments = ref<RealtimeSentimentEntry[]>([]);
@@ -69,7 +70,32 @@ const participantCount = computed(() => {
   return speakers.size;
 });
 
+const showRuntimeSurface = computed(() => {
+  return (
+    isRunning.value || isFinalizing.value || keepRuntimeSurfaceVisible.value
+  );
+});
+
 let durationTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopDurationTimer() {
+  if (durationTimer) {
+    clearInterval(durationTimer);
+    durationTimer = null;
+  }
+}
+
+function preserveRuntimeSurface(message?: string) {
+  if (message && !liveError.value) {
+    liveError.value = message;
+  }
+
+  isRunning.value = false;
+  isFinalizing.value = false;
+  keepRuntimeSurfaceVisible.value = true;
+  hasTerminalReport.value = false;
+  stopDurationTimer();
+}
 
 function pushRuntimeInfoMessage(message: string) {
   const normalized = message.trim();
@@ -182,10 +208,8 @@ function buildPipelineStartRequest(): PipelineStartRequest {
 
 async function startMeeting() {
   try {
-    if (isRunning.value || isFinalizing.value) {
-      console.log(`[Meeting] Resetting previous meeting state before starting new one`);
-      disconnect();
-    }
+    console.log(`[Meeting] Resetting previous meeting state before starting new one`);
+    disconnect();
 
     clearSubtitles();
     summary.value = null;
@@ -194,37 +218,27 @@ async function startMeeting() {
     sentimentStatus.value = "idle";
     liveError.value = null;
     isFinalizing.value = false;
-
-    console.log(`[Meeting] Connecting to gateway...`);
-    await api.meeting.connect();
-
-    const request = buildPipelineStartRequest();
-    isRunning.value = true;
-    startTime.value = new Date().toISOString();
-    duration.value = 0;
+    keepRuntimeSurfaceVisible.value = true;
+    hasTerminalReport.value = false;
     runtimeInfoMessages.value = [];
     runtimeActionWindows.value = [];
     realtimeSentiments.value = [];
-    sentimentStatus.value = config.value.sentimentEnabled ? "waiting" : "idle";
-
-    if (durationTimer) {
-      clearInterval(durationTimer);
-    }
-    durationTimer = setInterval(() => {
-      duration.value++;
-    }, 1000);
 
     api.meeting.onError((error) => {
       console.error("[Meeting] WebSocket error:", error);
-      liveError.value = "网关连接异常，请检查 M5 服务（8000）是否正常。";
+      preserveRuntimeSurface("网关连接异常，请检查 M5 服务（8000）是否正常。");
     });
 
     api.meeting.onClose(() => {
-      if (isRunning.value || isFinalizing.value) {
-        liveError.value = "网关连接已断开，请重新开始会议。";
-        isRunning.value = false;
-        isFinalizing.value = false;
+      if (hasTerminalReport.value) {
+        return;
       }
+
+      if (!showRuntimeSurface.value && !liveError.value) {
+        return;
+      }
+
+      preserveRuntimeSurface("网关连接已断开，请重新开始会议。");
     });
 
     api.meeting.onMessage((message) => {
@@ -236,12 +250,16 @@ async function startMeeting() {
 
       if (msg.type === "info") {
         pushRuntimeInfoMessage(msg.message || "");
+        keepRuntimeSurfaceVisible.value = true;
+        liveError.value = null;
       } else if (msg.type === "subtitle") {
         const sub = msg.data as SubtitleEntry;
         subtitles.value.push(sub);
+        keepRuntimeSurfaceVisible.value = true;
         liveError.value = null;
       } else if (msg.type === "asr_result") {
         applyAsrPayload(msg.data);
+        keepRuntimeSurfaceVisible.value = true;
       } else if (msg.type === "translation") {
         applyTranslationPayload(msg.data);
       } else if (msg.type === "sentiment") {
@@ -273,6 +291,8 @@ async function startMeeting() {
           };
           sentiment?: unknown;
         };
+        const meetingDuration = duration.value;
+        stopDurationTimer();
 
         const summaryText = reportData.summary.summary || "";
         const keyPoints = deriveKeyPoints(
@@ -298,9 +318,11 @@ async function startMeeting() {
           participants: Array.from(
             new Set(subtitles.value.map((s) => s.speaker)),
           ),
-          duration: duration.value,
+          duration: meetingDuration,
           generatedAt: new Date().toISOString(),
         };
+        hasTerminalReport.value = true;
+        keepRuntimeSurfaceVisible.value = false;
         isRunning.value = false;
         isFinalizing.value = false;
         summaryStatus.value = "ready";
@@ -316,21 +338,33 @@ async function startMeeting() {
         const errorMessage = msg.message || errData?.message || "实时处理异常";
         console.error(`[Meeting] Error: ${errorMessage}`);
         liveError.value = errorMessage;
+        preserveRuntimeSurface();
         if (summaryStatus.value === "loading" || isFinalizing.value) {
-          isRunning.value = false;
-          isFinalizing.value = false;
           summaryStatus.value = "error";
           summaryError.value = errorMessage || "会议总结生成失败";
         }
       }
     });
 
+    console.log(`[Meeting] Connecting to gateway...`);
+    await api.meeting.connect();
+
+    const request = buildPipelineStartRequest();
+    isRunning.value = true;
+    keepRuntimeSurfaceVisible.value = true;
+    startTime.value = new Date().toISOString();
+    duration.value = 0;
+    sentimentStatus.value = config.value.sentimentEnabled ? "waiting" : "idle";
+
+    stopDurationTimer();
+    durationTimer = setInterval(() => {
+      duration.value++;
+    }, 1000);
+
     api.meeting.start(request);
   } catch (error) {
     console.error("Failed to start meeting:", error);
-    liveError.value = "无法连接网关，请确认服务是否启动。";
-    isRunning.value = false;
-    isFinalizing.value = false;
+    preserveRuntimeSurface("无法连接网关，请确认服务是否启动。");
   }
 }
 
@@ -344,26 +378,24 @@ async function endMeeting() {
     summaryError.value = null;
     liveError.value = null;
     isFinalizing.value = true;
+    keepRuntimeSurfaceVisible.value = true;
+    hasTerminalReport.value = false;
     pushRuntimeInfoMessage("正在基于已输出内容生成会议总结...");
     api.meeting.end();
 
-    if (durationTimer) {
-      clearInterval(durationTimer);
-      durationTimer = null;
-    }
+    stopDurationTimer();
   } catch (error) {
     console.error("Failed to end meeting:", error);
   }
 }
 
 function disconnect() {
-  if (durationTimer) {
-    clearInterval(durationTimer);
-    durationTimer = null;
-  }
+  stopDurationTimer();
   api.meeting.disconnect();
   isRunning.value = false;
   isFinalizing.value = false;
+  keepRuntimeSurfaceVisible.value = false;
+  hasTerminalReport.value = false;
   startTime.value = null;
 }
 
@@ -387,6 +419,7 @@ export function useMeetingStore() {
   return {
     isRunning,
     isFinalizing,
+    showRuntimeSurface,
     startTime,
     duration,
     formattedDuration,

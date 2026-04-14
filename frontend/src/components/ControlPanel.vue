@@ -33,18 +33,6 @@
       <h3>会议配置</h3>
 
       <div class="config-item">
-        <label>音频目录</label>
-        <input v-model="localConfig.inputDir" type="text" @change="handleConfigChange"
-          placeholder="留空时使用网关默认 audio 目录" />
-        <p class="config-hint">目录路径以 Gateway 所在机器为准</p>
-      </div>
-
-      <div class="config-item">
-        <label>文件匹配模式</label>
-        <input v-model="localConfig.globPattern" type="text" @change="handleConfigChange" placeholder="例如 *.m4a" />
-      </div>
-
-      <div class="config-item">
         <label>源语言</label>
         <CustomSelect v-model="localConfig.language" :options="languageOptions"
           @update:model-value="handleConfigChange" />

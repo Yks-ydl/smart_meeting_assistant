@@ -18,7 +18,7 @@
         </aside>
 
         <section class="content-area">
-          <div class="realtime-section" v-if="isRunning || isFinalizing">
+          <div class="realtime-section" v-if="showRuntimeSurface">
             <div class="panel-row">
               <SubtitlePanel />
             </div>
@@ -31,7 +31,7 @@
             </div>
           </div>
 
-          <div class="welcome-section" v-if="!isRunning && !showSummary">
+          <div class="welcome-section" v-if="!showRuntimeSurface && !showSummary">
             <div class="welcome-content">
               <div class="welcome-icon">🎙️</div>
               <h2>欢迎使用智能会议助手</h2>
@@ -70,10 +70,10 @@ import SubtitlePanel from './components/SubtitlePanel.vue'
 import SentimentPanel from './components/SentimentPanel.vue'
 import SummaryPanel from './components/SummaryPanel.vue'
 
-const { isRunning, isFinalizing, config, summary, summaryStatus } = useMeetingStore()
+const { isRunning, isFinalizing, showRuntimeSurface, config, summary, summaryStatus } = useMeetingStore()
 
 const showSummary = computed(() => {
-  if (isRunning.value || isFinalizing.value) {
+  if (showRuntimeSurface.value) {
     return false
   }
   return summaryStatus.value !== 'idle' || summary.value !== null
