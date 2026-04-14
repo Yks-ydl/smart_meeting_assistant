@@ -121,8 +121,7 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   box-shadow: var(--shadow-card);
   display: flex;
   flex-direction: column;
-  height: var(--result-panel-height);
-  overflow: hidden;
+  min-height: var(--meeting-panel-min-height);
 }
 
 .panel-header {
@@ -136,11 +135,9 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
 }
 
 .sentiment-content {
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 18px;
-  flex: 1;
-  min-height: 0;
 }
 
 .moments-section {
@@ -256,6 +253,7 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   min-height: 0;
   max-height: var(--result-list-max-height);
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 6px;
 }
 

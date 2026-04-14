@@ -1,40 +1,39 @@
 <template>
   <div class="subtitle-panel">
     <div class="panel-header">
-      <h2>实时字幕</h2>
+      <div class="panel-heading">
+        <h2>实时字幕</h2>
+        <p class="runtime-inline" v-if="showRuntimeMessage">{{ runtimeMessage }}</p>
+      </div>
       <div class="subtitle-count" v-if="subtitles.length > 0">
         {{ subtitles.length }} 条记录
       </div>
     </div>
 
-    <div class="runtime-strip" v-if="showRuntimeStrip">
-      <section class="runtime-card">
-        <div class="runtime-label">运行状态</div>
-        <p class="runtime-message">{{ runtimeMessage }}</p>
-      </section>
-
-      <section class="runtime-card" v-if="config.sentimentEnabled">
-        <div class="runtime-label">实时情感</div>
-        <div class="sentiment-chip-list" v-if="recentRealtimeSentiments.length > 0">
-          <div
-            v-for="entry in recentRealtimeSentiments"
-            :key="entry.id"
-            class="sentiment-chip"
-            :class="toneClass(entry.label)"
-          >
-            <span class="chip-speaker">{{ entry.speaker }}</span>
-            <span class="chip-label">{{ entry.label }}</span>
-            <span class="chip-signal" v-if="entry.signal">{{ entry.signal }}</span>
-            <span class="chip-time" v-if="entry.timestamp !== undefined">
-              {{ formatRealtimeTimestamp(entry.timestamp) }}
-            </span>
-          </div>
+    <div class="realtime-sentiment-row" v-if="showRealtimeSentimentRow">
+      <span class="runtime-label">实时情感</span>
+      <div class="sentiment-chip-list">
+        <div
+          v-for="entry in latestRealtimeSentiments"
+          :key="entry.speaker"
+          class="sentiment-chip"
+          :class="toneClass(entry.label)"
+        >
+          <span class="chip-speaker">{{ entry.speaker }}</span>
+          <span class="chip-label">{{ entry.label }}</span>
+          <span class="chip-signal" v-if="entry.signal">{{ entry.signal }}</span>
         </div>
-        <p class="runtime-placeholder" v-else>等待实时情感...</p>
-      </section>
+      </div>
     </div>
 
-    <div class="subtitle-container" ref="containerRef">
+    <div
+      class="subtitle-container"
+      ref="containerRef"
+      tabindex="0"
+      @focusin="handlePanelFocusIn"
+      @focusout="handlePanelFocusOut"
+      @scroll="handleSubtitleScroll"
+    >
       <div v-if="subtitles.length > 0" class="subtitle-list-shell">
         <div class="subtitle-list" :style="{ height: `${totalSize}px` }">
           <div
@@ -81,6 +80,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useVirtualizer, type VirtualItem } from '@tanstack/vue-virtual'
+import type { RealtimeSentimentEntry } from '../types'
 import { useMeetingStore } from '../stores/meeting'
 import { resolveSubtitleTranslationDisplay } from '../stores/meetingMessageUtils'
 
@@ -90,10 +90,12 @@ const {
   isRunning,
   isFinalizing,
   liveError,
-  realtimeSentiments,
   runtimeInfoMessages,
+  realtimeSentiments,
 } = useMeetingStore()
 const containerRef = ref<HTMLDivElement | null>(null)
+const panelFocused = ref(false)
+const historyPinned = ref(false)
 
 type SubtitleWithTranslationState = {
   id: string
@@ -129,9 +131,8 @@ const rowVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>(
   computed(() => ({
     count: subtitlesWithTranslationState.value.length,
     getScrollElement: () => containerRef.value,
-    estimateSize: () => 132,
+    estimateSize: () => 144,
     overscan: 5,
-    gap: 12,
     getItemKey: (index: number) =>
       subtitlesWithTranslationState.value[index]?.id ?? `subtitle-${index}`,
   })),
@@ -149,12 +150,26 @@ const virtualRows = computed<VirtualSubtitleRow[]>(() =>
 
 const totalSize = computed(() => rowVirtualizer.value.getTotalSize())
 const latestRuntimeInfo = computed(() => runtimeInfoMessages.value.at(-1) ?? null)
-const recentRealtimeSentiments = computed(() => realtimeSentiments.value.slice(-3).reverse())
-const showRuntimeStrip = computed(() =>
+const latestRealtimeSentiments = computed<RealtimeSentimentEntry[]>(() => {
+  // Keep one latest tag per speaker instead of stacking duplicate speaker updates.
+  const latestBySpeaker = new Map<string, RealtimeSentimentEntry>()
+  for (const entry of realtimeSentiments.value) {
+    latestBySpeaker.set(entry.speaker, entry)
+  }
+
+  return Array.from(latestBySpeaker.values()).sort((left, right) => {
+    const leftTimestamp = typeof left.timestamp === 'number' ? left.timestamp : -1
+    const rightTimestamp = typeof right.timestamp === 'number' ? right.timestamp : -1
+    return rightTimestamp - leftTimestamp
+  })
+})
+const showRuntimeMessage = computed(() =>
   isRunning.value
   || isFinalizing.value
-  || runtimeInfoMessages.value.length > 0
-  || (config.value.sentimentEnabled && realtimeSentiments.value.length > 0),
+  || runtimeInfoMessages.value.length > 0,
+)
+const showRealtimeSentimentRow = computed(() =>
+  config.value.sentimentEnabled && latestRealtimeSentiments.value.length > 0,
 )
 const runtimeMessage = computed(() => {
   if (latestRuntimeInfo.value?.message) {
@@ -163,7 +178,10 @@ const runtimeMessage = computed(() => {
   if (isFinalizing.value) {
     return '正在基于已输出内容整理会后结果...'
   }
-  return '等待网关状态消息...'
+  if (isRunning.value) {
+    return '等待网关状态消息...'
+  }
+  return ''
 })
 
 function measureSubtitleElement(
@@ -172,6 +190,28 @@ function measureSubtitleElement(
   if (element instanceof Element) {
     rowVirtualizer.value.measureElement(element as HTMLDivElement)
   }
+}
+
+function isNearLiveEdge(): boolean {
+  const container = containerRef.value
+  if (!container) {
+    return true
+  }
+
+  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= 48
+}
+
+function handleSubtitleScroll(): void {
+  historyPinned.value = !isNearLiveEdge()
+}
+
+function handlePanelFocusIn(): void {
+  panelFocused.value = true
+}
+
+function handlePanelFocusOut(): void {
+  panelFocused.value = false
+  historyPinned.value = !isNearLiveEdge()
 }
 
 function formatAudioSeconds(rawTimestamp: string): string | null {
@@ -211,13 +251,6 @@ function formatTime(timestamp: string): string {
   })
 }
 
-function formatRealtimeTimestamp(timestamp?: number): string {
-  if (typeof timestamp !== 'number') {
-    return ''
-  }
-  return formatAudioSeconds(String(timestamp)) || `${timestamp.toFixed(1)}s`
-}
-
 function toneClass(label: string): string {
   const normalized = label.toLowerCase()
   if (normalized.includes('positive')) {
@@ -231,13 +264,20 @@ function toneClass(label: string): string {
 
 watch(
   () => subtitles.value.length,
-  async (count) => {
+  async (count, previousCount) => {
     if (count === 0) {
+      panelFocused.value = false
+      historyPinned.value = false
+      return
+    }
+
+    if (count <= previousCount || panelFocused.value || historyPinned.value) {
       return
     }
 
     await nextTick()
-    rowVirtualizer.value.scrollToIndex(count - 1, { align: 'end' })
+    // Only follow the stream while the viewer stays at the live edge.
+    rowVirtualizer.value.scrollToIndex(count - 1, { align: 'start' })
   },
 )
 </script>
@@ -259,15 +299,35 @@ watch(
 .panel-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 12px;
   flex-shrink: 0;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
 }
 
 .panel-header h2 {
   margin: 0;
   font-size: 1.35rem;
   font-weight: 600;
+}
+
+.runtime-inline {
+  margin: 0;
+  min-width: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .subtitle-count {
@@ -282,24 +342,20 @@ watch(
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  overscroll-behavior: contain;
 }
 
-.runtime-strip {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 12px;
+.subtitle-container:focus-visible {
+  outline: 2px solid rgba(14, 165, 233, 0.28);
+  outline-offset: 4px;
+}
+
+.realtime-sentiment-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 16px;
-  flex-shrink: 0;
-}
-
-.runtime-card {
-  background: rgba(237, 243, 251, 0.82);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 12px 14px;
-  min-height: 84px;
+  min-width: 0;
 }
 
 .runtime-label {
@@ -308,21 +364,16 @@ watch(
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
-  margin-bottom: 8px;
-}
-
-.runtime-message,
-.runtime-placeholder {
-  margin: 0;
-  font-size: 0.92rem;
-  line-height: 1.45;
-  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .sentiment-chip-list {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
 
 .sentiment-chip {
@@ -336,6 +387,7 @@ watch(
   line-height: 1.2;
   background: rgba(14, 165, 233, 0.08);
   color: #075985;
+  white-space: nowrap;
 }
 
 .sentiment-chip.tone-positive {
@@ -357,18 +409,14 @@ watch(
   font-weight: 600;
 }
 
-.chip-signal,
-.chip-time {
+.chip-signal {
   color: inherit;
   opacity: 0.78;
 }
 
-.subtitle-container::-webkit-scrollbar {
-  display: none;
-}
-
 .subtitle-list-shell {
   min-height: 100%;
+  padding-bottom: 12px;
 }
 
 .subtitle-list {
@@ -381,6 +429,7 @@ watch(
   position: absolute;
   top: 0;
   width: 100%;
+  padding-bottom: 12px;
 }
 
 .subtitle-item {
@@ -466,11 +515,5 @@ watch(
 .error-text {
   color: #dc2626;
   font-weight: 600;
-}
-
-@media (max-width: 768px) {
-  .runtime-strip {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

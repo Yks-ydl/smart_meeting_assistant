@@ -29,15 +29,15 @@
         </div>
       </div>
 
-      <div class="summary-section">
+      <div class="summary-section" v-if="renderedSummary">
         <h4>会议摘要</h4>
         <div class="markdown-content" v-html="renderedSummary"></div>
       </div>
 
-      <div class="summary-section">
+      <div class="summary-section" v-if="visibleKeyPoints.length > 0">
         <h4>关键要点</h4>
         <ul class="key-points">
-          <li v-for="(point, index) in summary.keyPoints" :key="index">
+          <li v-for="(point, index) in visibleKeyPoints" :key="index">
             <div class="markdown-content point-content" v-html="renderMarkdown(point)"></div>
           </li>
         </ul>
@@ -106,7 +106,41 @@ const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 const renderedSummary = computed(() => {
   if (!summary.value?.summary) return ''
-  return markdown.render(summary.value.summary)
+
+  // Keep the abstract concise here and let dedicated sections render detailed bullets below.
+  const lines = summary.value.summary.split(/\r?\n/)
+  const detailHeadingIndex = lines.findIndex((line) =>
+    /^\s{0,3}#{1,6}\s*(核心要点|关键要点|决策事项|待跟进问题|行动项)\s*$/u.test(line.trim()),
+  )
+  const summaryIntro = detailHeadingIndex > 0
+    ? lines.slice(0, detailHeadingIndex).join('\n').trim()
+    : summary.value.summary
+
+  if (!summaryIntro) {
+    return ''
+  }
+
+  return markdown.render(summaryIntro)
+})
+
+const visibleKeyPoints = computed(() => {
+  if (!summary.value?.keyPoints) return []
+
+  // Normalize once so the template can reuse a single deduped key-point list.
+  const seen = new Set<string>()
+  return summary.value.keyPoints.filter((point) => {
+    const normalized = point
+      .replace(/^\s*(?:[-*]|\d+[.)、])\s*/, '')
+      .trim()
+      .toLowerCase()
+
+    if (!normalized || seen.has(normalized)) {
+      return false
+    }
+
+    seen.add(normalized)
+    return true
+  })
 })
 
 const uniqueParticipants = computed(() => {
@@ -162,8 +196,7 @@ function renderMarkdown(text: string): string {
   box-shadow: var(--shadow-card);
   display: flex;
   flex-direction: column;
-  height: var(--result-panel-height);
-  overflow: hidden;
+  min-height: var(--meeting-panel-min-height);
 }
 
 .panel-header {
@@ -190,11 +223,9 @@ function renderMarkdown(text: string): string {
 }
 
 .summary-content {
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   gap: 24px;
-  flex: 1;
-  min-height: 0;
 }
 
 .summary-section {
@@ -318,11 +349,14 @@ function renderMarkdown(text: string): string {
   min-height: 0;
   max-height: var(--result-list-max-height);
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 6px;
 }
 
 .action-section {
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .empty-actions {
