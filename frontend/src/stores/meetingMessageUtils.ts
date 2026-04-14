@@ -2,6 +2,7 @@ export type ShortLanguageCode = "zh" | "en" | "ja";
 
 import type {
   ActionItemDraft,
+  RealtimeSentimentEntry,
   RuntimeActionWindow,
   SentimentData,
   SubtitleEntry,
@@ -224,6 +225,25 @@ function unwrapSentimentPayload(
   return null;
 }
 
+
+function unwrapRealtimeSentimentPayload(
+  payload: unknown,
+): Record<string, unknown> | null {
+  if (!isObject(payload)) {
+    return null;
+  }
+
+  if (isObject(payload.result)) {
+    return payload.result;
+  }
+
+  if (isObject(payload.data)) {
+    return payload.data;
+  }
+
+  return payload;
+}
+
 export function normalizeSentimentReport(
   payload: unknown,
 ): SentimentData | null {
@@ -250,6 +270,42 @@ export function normalizeSentimentReport(
     significant_moments: normalizeSignificantMoments(
       rawReport.significant_moments,
     ),
+  };
+}
+
+export function normalizeRealtimeSentimentEntry(
+  payload: unknown,
+  context?: { speaker?: string; timestamp?: unknown; subtitleId?: string },
+): RealtimeSentimentEntry | null {
+  const rawPayload = unwrapRealtimeSentimentPayload(payload);
+  if (!rawPayload) {
+    return null;
+  }
+
+  const label =
+    toCleanString(rawPayload.label) ||
+    toCleanString(rawPayload.sentiment) ||
+    toCleanString(rawPayload.text);
+  if (!label) {
+    return null;
+  }
+
+  const speaker =
+    toCleanString(rawPayload.speaker) ||
+    toCleanString(context?.speaker) ||
+    "Unknown";
+  const timestamp =
+    toFiniteNumber(rawPayload.timestamp) ?? toFiniteNumber(context?.timestamp) ?? undefined;
+
+  return {
+    id:
+      toCleanString(context?.subtitleId) ||
+      `${speaker}-${label}-${timestamp ?? "na"}`,
+    speaker,
+    label,
+    signal: toCleanString(rawPayload.signal) || undefined,
+    explanation: toCleanString(rawPayload.explanation) || undefined,
+    timestamp,
   };
 }
 

@@ -16,6 +16,12 @@ class Utterance(BaseModel):
     language: str = "zh"
 
 
+class RealtimeUtterance(BaseModel):
+    session_id: str | None = None
+    speaker: str
+    text: str
+
+
 SIGNAL_KEYWORDS = {
     "agreement": ["同意", "赞成", "可以", "没问题", "agree", "exactly", "makes sense"],
     "disagreement": ["不对", "反对", "不太行", "different view", "disagree", "however"],
@@ -62,9 +68,40 @@ def build_empty_report() -> dict:
     }
 
 
+def analyze_realtime_utterance(utterance: RealtimeUtterance) -> dict:
+    # Reuse the same detectors for realtime and aggregate modes so labels stay consistent.
+    text = utterance.text.strip()
+    if not text:
+        return {
+            "status": "success",
+            "speaker": utterance.speaker,
+            "label": "neutral",
+            "sentiment": "neutral",
+            "signal": "neutral",
+            "explanation": "未检测到有效文本。",
+        }
+
+    signals = detect_signals(text)
+    emotion = detect_emotion(text)
+    signal = signals[0] if signals else "neutral"
+    explanation = f"检测到{signal}信号，整体语气偏{emotion}。"
+
+    return {
+        "status": "success",
+        "speaker": utterance.speaker,
+        "label": emotion,
+        "sentiment": emotion,
+        "signal": signal,
+        "explanation": explanation,
+    }
+
+
 @app.post("/api/v1/sentiment/analyze")
-async def analyze_sentiment(utterances: list[Utterance]):
-    """会议级情感与交互信号分析，输出结构对齐 API 文档中的 M4 响应。"""
+async def analyze_sentiment(utterances: list[Utterance] | RealtimeUtterance):
+    """同一入口兼容实时单句分析与会议级汇总分析，避免网关维护两套 M4 协议。"""
+    if isinstance(utterances, RealtimeUtterance):
+        return analyze_realtime_utterance(utterances)
+
     if not utterances:
         return build_empty_report()
 

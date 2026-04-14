@@ -624,25 +624,51 @@ async def run_directory_pipeline(
             f"{subtitle['speaker']}: {subtitle['text']}"
         )
 
+        translation_task = None
         if request.enable_translation:
-            translation_res = await call_service(
-                client,
-                SERVICES["translation"],
-                {
-                    "session_id": request.session_id,
-                    "text": subtitle["text"],
-                    "target_lang": request.target_lang,
-                },
+            translation_task = asyncio.create_task(
+                call_service(
+                    client,
+                    SERVICES["translation"],
+                    {
+                        "session_id": request.session_id,
+                        "text": subtitle["text"],
+                        "target_lang": request.target_lang,
+                    },
+                )
             )
+
+        sentiment_task = None
+        if request.enable_sentiment:
+            sentiment_task = asyncio.create_task(
+                call_service(
+                    client,
+                    SERVICES["sentiment"],
+                    {
+                        "session_id": request.session_id,
+                        "speaker": subtitle["speaker"],
+                        "text": subtitle["text"],
+                    },
+                )
+            )
+
+        if translation_task or sentiment_task:
+            translation_res = await translation_task if translation_task else None
+            sentiment_res = await sentiment_task if sentiment_task else None
             await websocket.send_json(
                 {
                     "type": "analysis_result",
                     "data": {
                         "subtitle_id": subtitle["id"],
+                        "speaker": subtitle["speaker"],
+                        "timestamp": round(start_time, 3),
                         "translation": {
                             **translation_res,
                             "subtitle_id": subtitle["id"],
-                        },
+                        }
+                        if translation_res
+                        else None,
+                        "sentiment": sentiment_res,
                     },
                 }
             )

@@ -78,6 +78,15 @@ class GatewayDirectoryPipelineContractTest(unittest.TestCase):
                     ],
                 }
             if url.endswith("/sentiment/analyze"):
+                if isinstance(payload, dict):
+                    return {
+                        "status": "success",
+                        "speaker": payload["speaker"],
+                        "label": "positive",
+                        "sentiment": "positive",
+                        "signal": "agreement",
+                        "explanation": "检测到 agreement 信号，整体语气偏 positive。",
+                    }
                 return {
                     "overall_summary": {
                         "total_turns": len(payload or []),

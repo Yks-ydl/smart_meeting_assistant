@@ -4,6 +4,7 @@ import {
   deriveKeyPoints,
   extractAnalysisResultPayloads,
   isTargetLanguageLocked,
+  normalizeRealtimeSentimentEntry,
   normalizeSentimentReport,
   normalizeTargetLanguage,
   resolveSubtitleTranslationDisplay,
@@ -171,6 +172,36 @@ describe("extractAnalysisResultPayloads", () => {
 
   test("returns empty object for invalid input", () => {
     expect(extractAnalysisResultPayloads(null)).toEqual({});
+  });
+});
+
+describe("normalizeRealtimeSentimentEntry", () => {
+  test("normalizes realtime sentiment payloads from the gateway", () => {
+    const payload = {
+      status: "success",
+      speaker: "Alice",
+      label: "positive",
+      signal: "agreement",
+      explanation: "检测到 agreement 信号，整体语气偏 positive。",
+    };
+
+    expect(
+      normalizeRealtimeSentimentEntry(payload, {
+        subtitleId: "subtitle-1",
+        timestamp: 12.4,
+      }),
+    ).toEqual({
+      id: "subtitle-1",
+      speaker: "Alice",
+      label: "positive",
+      signal: "agreement",
+      explanation: "检测到 agreement 信号，整体语气偏 positive。",
+      timestamp: 12.4,
+    });
+  });
+
+  test("returns null when realtime payload has no usable label", () => {
+    expect(normalizeRealtimeSentimentEntry({ foo: "bar" })).toBeNull();
   });
 });
 

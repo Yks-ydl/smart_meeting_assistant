@@ -3,6 +3,7 @@ import type {
   ActionItemDraft,
   MeetingConfig,
   PipelineStartRequest,
+  RealtimeSentimentEntry,
   RuntimeActionWindow,
   RuntimeInfoEntry,
   SubtitleEntry,
@@ -17,6 +18,7 @@ import {
   mergeActionItemCollections,
   normalizeSentimentReport,
   normalizePipelineSubtitle,
+  normalizeRealtimeSentimentEntry,
   normalizeRuntimeActionWindow,
   normalizeTargetLanguage,
 } from "./meetingMessageUtils";
@@ -43,14 +45,7 @@ const currentSentiment = ref<SentimentData | null>(null);
 const isFinalizing = ref(false);
 const runtimeInfoMessages = ref<RuntimeInfoEntry[]>([]);
 const runtimeActionWindows = ref<RuntimeActionWindow[]>([]);
-const realtimeSentiments = ref<{
-  id: string;
-  speaker: string;
-  label: string;
-  signal?: string;
-  explanation?: string;
-  timestamp?: number;
-}[]>([]);
+const realtimeSentiments = ref<RealtimeSentimentEntry[]>([]);
 const summary = ref<MeetingSummary | null>(null);
 const summaryStatus = ref<SummaryStatus>("idle");
 const summaryError = ref<string | null>(null);
@@ -130,6 +125,31 @@ function applySentimentPayload(raw: unknown) {
 
   currentSentiment.value = report;
   sentimentStatus.value = "ready";
+}
+
+function applyRealtimeSentimentPayload(raw: unknown, context?: unknown) {
+  const realtimeSentiment = normalizeRealtimeSentimentEntry(raw, {
+    speaker:
+      typeof context === "object" && context !== null && "speaker" in context
+        ? String((context as { speaker?: unknown }).speaker || "")
+        : undefined,
+    timestamp:
+      typeof context === "object" && context !== null && "timestamp" in context
+        ? (context as { timestamp?: unknown }).timestamp
+        : undefined,
+    subtitleId:
+      typeof context === "object" && context !== null && "subtitle_id" in context
+        ? String((context as { subtitle_id?: unknown }).subtitle_id || "")
+        : undefined,
+  });
+  if (!realtimeSentiment) {
+    return;
+  }
+
+  realtimeSentiments.value = [
+    ...realtimeSentiments.value.slice(-9),
+    realtimeSentiment,
+  ];
 }
 
 function applyActionWindowPayload(raw: unknown) {
@@ -232,7 +252,7 @@ async function startMeeting() {
           applyTranslationPayload(payload.translationPayload);
         }
         if (payload.sentimentPayload) {
-          applySentimentPayload(payload.sentimentPayload);
+          applyRealtimeSentimentPayload(payload.sentimentPayload, msg.data);
         }
       } else if (msg.type === "action_result") {
         applyActionWindowPayload(msg.data);
