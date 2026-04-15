@@ -211,22 +211,38 @@
 
 返回前端页面（来自 `smart_meeting_assistant/frontend/dist` 构建产物）。
 
-### WebSocket `/ws/meeting/{session_id}`
+### WebSocket `/ws/pipeline/dir`
 
-当前 WebSocket 协议保持不变，但 `type=start_meeting` 且 `mode=demo` 时，网关默认会优先走目录音频桥接流程：
+当前目录音频流程只支持这个 WebSocket 入口；旧的 `/ws/meeting/{session_id}` 已删除。
 
-1. 解析 `input_dir`；若请求未提供，则读取环境变量 `MEETING_AUDIO_INPUT_DIR`；若仍为空，则默认使用仓库根目录 `audio/`
-2. 调用 M6 `POST /api/v1/audio/process_directory`，默认使用 `glob_pattern="*"` 自动发现受支持的音频后缀
-3. 将 `merged_transcript` 逐条转换为现有前端可消费的 `subtitle` 消息
-4. 会议结束时继续复用现有的摘要、待办事项提取、情感和参与度分析流程
+前端建立连接后，第一条消息直接发送目录回放配置，不使用 `type=start_meeting` 包装：
 
-如需显式切回旧版 VCSum 字幕流，可设置环境变量：
-
-```env
-MEETING_DEMO_SOURCE=vcsum
+```json
+{
+  "session_id": "session-1",
+  "input_dir": "audio",
+  "glob_pattern": "*.wav",
+  "target_lang": "en",
+  "enable_translation": true,
+  "enable_actions": true,
+  "enable_sentiment": true
+}
 ```
 
-此时 `mode=demo` 会重新走 M7 `/api/v1/data/stream`。
+网关行为：
+
+1. 解析 `input_dir`；若请求未提供，则读取环境变量 `MEETING_AUDIO_INPUT_DIR`；若仍为空，则默认使用仓库根目录 `audio/`
+2. 调用 M6 `POST /api/v1/audio/process_directory`，并透传客户端提供的 `glob_pattern`
+3. 按既有契约流式发送 `info`、`asr_result`、`analysis_result`、`action_result`
+4. 处理完已发出的片段后生成最终 `meeting_end_report`
+
+客户端可在回放过程中发送：
+
+```json
+{"type": "end_meeting"}
+```
+
+此时网关会停止继续回放后续片段，并仅基于已经发出的字幕生成最终总结。
 
 ---
 
