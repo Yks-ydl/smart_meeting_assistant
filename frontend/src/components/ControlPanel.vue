@@ -159,6 +159,7 @@ watch(
   color: var(--text-primary);
   border: 1px solid var(--border-color);
   box-shadow: var(--shadow-card);
+  overflow: hidden;
 }
 
 .panel-header {

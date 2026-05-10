@@ -50,3 +50,29 @@ When demo sources emit different timestamp formats, normalize them at the presen
 - Tags: frontend, timestamps, virtualization, translation-mapping
 
 ---
+## [LRN-20260415-002] correction
+
+**Logged**: 2026-04-15T00:00:00Z
+**Priority**: high
+**Status**: pending
+**Area**: frontend
+
+### Summary
+
+Do not decide whether a list needs virtualization based on whether it is realtime; post-meeting result panes can still be long lists and need a correct virtualized viewport.
+
+### Details
+
+The initial response assumed that action items and significant moments should revert to plain rendering because they are not streaming data. The user corrected that premise: these lists are not realtime, but they can still be long enough to require virtualization. The actual bug was the missing and flawed shared virtual list implementation, not the decision to virtualize the panels.
+
+### Suggested Action
+
+When evaluating list rendering in this frontend, separate data freshness from list size. Keep virtualization for any potentially long list, and verify the viewport implementation itself before replacing it with a plain list.
+
+### Metadata
+
+- Source: user_feedback
+- Related Files: frontend/src/components/FullCardWindow.vue, frontend/src/components/SummaryPanel.vue, frontend/src/components/SentimentPanel.vue
+- Tags: frontend, virtualization, correction, ui
+
+---

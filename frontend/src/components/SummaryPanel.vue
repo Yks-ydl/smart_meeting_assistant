@@ -48,27 +48,34 @@
           <h4>行动项</h4>
           <span class="section-count" v-if="summary.actionItems.length > 0">{{ summary.actionItems.length }} 项</span>
         </div>
-        <div class="action-items" v-if="summary.actionItems.length > 0">
-          <div v-for="item in summary.actionItems" :key="item.id" class="action-item"
-            :class="`priority-${item.priority}`">
-            <div class="action-header">
-              <span class="action-task">{{ item.task }}</span>
-              <span class="priority-badge" :class="item.priority">
-                {{ priorityText(item.priority) }}
-              </span>
+        <FullCardWindow
+          v-if="summary.actionItems.length > 0"
+          class="action-items"
+          :items="summary.actionItems"
+          :get-item-key="actionItemKey"
+          :estimate-item-height="180"
+        >
+          <template #default="{ item }">
+            <div class="action-item" :class="`priority-${item.priority}`">
+              <div class="action-header">
+                <span class="action-task">{{ item.task }}</span>
+                <span class="priority-badge" :class="item.priority">
+                  {{ priorityText(item.priority) }}
+                </span>
+              </div>
+              <div class="action-meta" v-if="item.assignee || item.dueDate">
+                <span v-if="item.assignee" class="meta-tag">
+                  <span class="icon">👤</span>
+                  {{ item.assignee }}
+                </span>
+                <span v-if="item.dueDate" class="meta-tag">
+                  <span class="icon">📆</span>
+                  {{ item.dueDate }}
+                </span>
+              </div>
             </div>
-            <div class="action-meta" v-if="item.assignee || item.dueDate">
-              <span v-if="item.assignee" class="meta-tag">
-                <span class="icon">👤</span>
-                {{ item.assignee }}
-              </span>
-              <span v-if="item.dueDate" class="meta-tag">
-                <span class="icon">📆</span>
-                {{ item.dueDate }}
-              </span>
-            </div>
-          </div>
-        </div>
+          </template>
+        </FullCardWindow>
         <div class="empty-actions" v-else>未识别到行动项</div>
       </div>
 
@@ -100,6 +107,7 @@
 import { computed } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { useMeetingStore } from '../stores/meeting'
+import FullCardWindow from './FullCardWindow.vue'
 
 const { summary, summaryStatus, summaryError } = useMeetingStore()
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true })
@@ -184,6 +192,10 @@ function priorityText(priority: string): string {
 function renderMarkdown(text: string): string {
   return markdown.render(text || '')
 }
+
+function actionItemKey(item: { id: string }, index: number): string {
+  return item.id || `action-item-${index}`
+}
 </script>
 
 <style scoped>
@@ -198,6 +210,7 @@ function renderMarkdown(text: string): string {
   flex-direction: column;
   height: 100%;
   min-height: var(--meeting-panel-min-height);
+  overflow: hidden;
 }
 
 .panel-header {
@@ -346,14 +359,12 @@ function renderMarkdown(text: string): string {
 }
 
 .action-items {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
   min-height: 0;
   max-height: var(--result-list-max-height);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 6px;
+  scrollbar-gutter: stable;
+  padding-right: 14px;
 }
 
 .action-section {

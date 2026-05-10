@@ -44,18 +44,27 @@
 
       <div class="moments-section">
         <h3>显著时刻</h3>
-        <ul class="moment-list" v-if="sentiment.significant_moments.length > 0">
-          <li class="moment-item" v-for="(moment, index) in sentiment.significant_moments" :key="`${moment.speaker}-${index}`">
-            <div class="moment-meta">
-              <span class="moment-speaker">{{ moment.speaker }}</span>
-              <span class="moment-time">{{ formatTimestamp(moment.timestamp) }}</span>
-            </div>
-            <p class="moment-snippet">{{ moment.snippet || '（无文本片段）' }}</p>
-            <p class="moment-reason">
-              原因：{{ moment.reason.length > 0 ? moment.reason.join(' / ') : '未标注' }}
-            </p>
-          </li>
-        </ul>
+        <FullCardWindow
+          v-if="sentiment.significant_moments.length > 0"
+          class="moment-list"
+          :items="sentiment.significant_moments"
+          :get-item-key="momentKey"
+          :estimate-item-height="132"
+          :item-gap="10"
+        >
+          <template #default="{ item }">
+            <article class="moment-item">
+              <div class="moment-meta">
+                <span class="moment-speaker">{{ item.speaker }}</span>
+                <span class="moment-time">{{ formatTimestamp(item.timestamp) }}</span>
+              </div>
+              <p class="moment-snippet">{{ item.snippet || '（无文本片段）' }}</p>
+              <p class="moment-reason">
+                原因：{{ item.reason.length > 0 ? item.reason.join(' / ') : '未标注' }}
+              </p>
+            </article>
+          </template>
+        </FullCardWindow>
         <p class="empty-copy" v-else>未检测到显著时刻</p>
       </div>
     </div>
@@ -79,6 +88,7 @@
 import { computed } from 'vue'
 import type { SentimentSignificantMoment } from '../types'
 import { useMeetingStore } from '../stores/meeting'
+import FullCardWindow from './FullCardWindow.vue'
 
 const { currentSentiment, sentimentStatus } = useMeetingStore()
 
@@ -109,6 +119,10 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   }
   return typeof timestamp === 'string' ? timestamp : '未知'
 }
+
+function momentKey(moment: SentimentSignificantMoment, index: number): string {
+  return `${moment.speaker}-${index}-${formatTimestamp(moment.timestamp)}`
+}
 </script>
 
 <style scoped>
@@ -123,6 +137,7 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   flex-direction: column;
   height: 100%;
   min-height: var(--meeting-panel-min-height);
+  overflow: hidden;
 }
 
 .panel-header {
@@ -261,14 +276,12 @@ function formatTimestamp(timestamp: SentimentSignificantMoment['timestamp']): st
   margin: 0;
   padding: 0;
   list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
   min-height: 0;
   max-height: var(--result-list-max-height);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 6px;
+  scrollbar-gutter: stable;
+  padding-right: 14px;
 }
 
 .moment-item {

@@ -24,7 +24,7 @@ from core.chinese_utils import (
 )
 
 DEFAULT_AUDIO_GLOB_PATTERN = "*"
-DEFAULT_PIPELINE_REPLAY_DELAY_SEC = 5.0
+DEFAULT_PIPELINE_REPLAY_DELAY_SEC = 1.5
 
 app = FastAPI(title="M5 - Main Gateway & Orchestrator")
 
@@ -373,6 +373,14 @@ def resolve_pipeline_replay_delay() -> float:
     return max(0.0, delay)
 
 
+def format_pipeline_replay_delay(delay: float) -> str:
+    if delay <= 0:
+        return "收到一段就立即输出"
+
+    formatted = f"{delay:.1f}".rstrip("0").rstrip(".")
+    return f"每{formatted}秒输出一段"
+
+
 @dataclass
 class DirectoryPipelineRequest:
     session_id: str
@@ -543,6 +551,8 @@ async def run_directory_pipeline(
     request: DirectoryPipelineRequest,
     stop_requested: asyncio.Event,
 ):
+    replay_delay = resolve_pipeline_replay_delay()
+
     await send_directory_pipeline_info(
         websocket,
         "⏳ 阶段 1/3: 正在调用 M6 批量处理音频目录，这可能需要几分钟...",
@@ -591,11 +601,11 @@ async def run_directory_pipeline(
 
     await send_directory_pipeline_info(
         websocket,
-        "✅ 阶段 1 完成！开始流式回放分析结果 (每5秒输出一段)...",
+        "✅ 阶段 1 完成！开始流式回放分析结果 "
+        f"({format_pipeline_replay_delay(replay_delay)})...",
     )
 
     state = DirectoryPipelineState()
-    replay_delay = resolve_pipeline_replay_delay()
 
     for index, segment in enumerate(merged_transcript):
         if stop_requested.is_set():

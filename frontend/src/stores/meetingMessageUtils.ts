@@ -14,12 +14,71 @@ type ActionItemLike = {
   deadline?: string;
 };
 
+const ACTION_TASK_KEYS = ["task", "action", "title", "事项", "任务"] as const;
+const ACTION_ASSIGNEE_KEYS = ["assignee", "owner", "负责人"] as const;
+const ACTION_DEADLINE_KEYS = [
+  "deadline",
+  "dueDate",
+  "due_date",
+  "date",
+  "截止日期",
+  "截止时间",
+  "日期",
+  "时间",
+] as const;
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function toCleanString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+// Normalize inconsistent action payload labels once so runtime and final summaries share one cleanup path.
+function normalizeActionDeadline(value: unknown): string | undefined {
+  const trimmed = toCleanString(value)
+    .replace(/^[（(]\s*|\s*[）)]$/gu, "")
+    .trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const normalized = trimmed
+    .replace(
+      /^(?:due\s*date|deadline|截止日期|截止时间|日期|时间)\s*[:：-]?\s*/iu,
+      "",
+    )
+    .trim();
+
+  return normalized || undefined;
+}
+
+function isDeadlinePlaceholder(value: unknown): boolean {
+  const trimmed = toCleanString(value)
+    .replace(/^[（(]\s*|\s*[）)]$/gu, "")
+    .trim();
+
+  if (!trimmed) {
+    return true;
+  }
+
+  return normalizeActionDeadline(trimmed) === undefined;
+}
+
+function pickFirstCleanString(
+  source: Record<string, unknown>,
+  keys: readonly string[],
+): string {
+  for (const key of keys) {
+    const value = toCleanString(source[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
 }
 
 export function normalizeTargetLanguage(input?: string): ShortLanguageCode {
@@ -64,7 +123,8 @@ export function normalizePipelineSubtitle(
   }
 
   const text = toCleanString(value.corrected_text) || toCleanString(value.text);
-  const speaker = toCleanString(value.speaker) || toCleanString(value.speaker_label);
+  const speaker =
+    toCleanString(value.speaker) || toCleanString(value.speaker_label);
   const startTime = toFiniteNumber(value.start_time);
   const endTime = toFiniteNumber(value.end_time);
   const timestamp =
@@ -77,8 +137,7 @@ export function normalizePipelineSubtitle(
 
   return {
     id:
-      toCleanString(value.id) ||
-      `${speaker}-${timestamp}-${text.slice(0, 24)}`,
+      toCleanString(value.id) || `${speaker}-${timestamp}-${text.slice(0, 24)}`,
     speaker,
     text,
     timestamp,
@@ -225,7 +284,6 @@ function unwrapSentimentPayload(
   return null;
 }
 
-
 function unwrapRealtimeSentimentPayload(
   payload: unknown,
 ): Record<string, unknown> | null {
@@ -295,7 +353,9 @@ export function normalizeRealtimeSentimentEntry(
     toCleanString(context?.speaker) ||
     "Unknown";
   const timestamp =
-    toFiniteNumber(rawPayload.timestamp) ?? toFiniteNumber(context?.timestamp) ?? undefined;
+    toFiniteNumber(rawPayload.timestamp) ??
+    toFiniteNumber(context?.timestamp) ??
+    undefined;
 
   return {
     id:
@@ -332,8 +392,17 @@ function parseLineActionItem(line: string): ActionItemLike | null {
   let deadline: string | undefined;
   const deadlineMatch = cleaned.match(/[（(]([^（）()]+)[）)]\s*$/);
   if (deadlineMatch) {
-    deadline = deadlineMatch[1].trim();
-    cleaned = cleaned.slice(0, cleaned.length - deadlineMatch[0].length).trim();
+    const normalizedDeadline = normalizeActionDeadline(deadlineMatch[1]);
+    if (normalizedDeadline) {
+      deadline = normalizedDeadline;
+      cleaned = cleaned
+        .slice(0, cleaned.length - deadlineMatch[0].length)
+        .trim();
+    } else if (isDeadlinePlaceholder(deadlineMatch[1])) {
+      cleaned = cleaned
+        .slice(0, cleaned.length - deadlineMatch[0].length)
+        .trim();
+    }
   }
 
   let assignee: string | undefined;
@@ -362,13 +431,18 @@ function normalizeActionList(list: unknown): ActionItemLike[] {
       continue;
     }
 
-    const task = toCleanString(item.task);
+    const task = pickFirstCleanString(item, ACTION_TASK_KEYS);
     if (!task) {
       continue;
     }
 
-    const assignee = toCleanString(item.assignee) || undefined;
-    const deadline = toCleanString(item.deadline) || undefined;
+    const assignee =
+      pickFirstCleanString(item, ACTION_ASSIGNEE_KEYS) || undefined;
+    const deadline = normalizeActionDeadline(
+      ACTION_DEADLINE_KEYS.map((key) => item[key]).find((value) =>
+        toCleanString(value),
+      ),
+    );
     normalized.push({ task, assignee, deadline });
   }
 
@@ -379,21 +453,22 @@ function toActionItemDraft(item: ActionItemLike): ActionItemDraft {
   return {
     task: item.task,
     assignee: item.assignee,
-    dueDate: item.deadline,
+    dueDate: normalizeActionDeadline(item.deadline),
   };
 }
 
 function buildActionItemKey(item: ActionItemLike | ActionItemDraft): string {
-  const dueDate = "dueDate" in item
-    ? item.dueDate
-    : "deadline" in item
-      ? item.deadline
-      : undefined;
+  const dueDate =
+    "dueDate" in item
+      ? item.dueDate
+      : "deadline" in item
+        ? item.deadline
+        : undefined;
 
   return [
     toCleanString(item.task).toLowerCase(),
     toCleanString(item.assignee).toLowerCase(),
-    toCleanString(dueDate).toLowerCase(),
+    toCleanString(normalizeActionDeadline(dueDate)).toLowerCase(),
   ].join("|");
 }
 

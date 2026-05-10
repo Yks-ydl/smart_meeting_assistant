@@ -46,6 +46,34 @@ ACTION_ITEM_PATTERN = re.compile(
     re.MULTILINE | re.IGNORECASE
 )
 
+DEADLINE_LABEL_PATTERN = re.compile(
+    r'^(?:截止日期|截止时间|日期|时间|deadline|due\s*date)\s*[:：-]?\s*',
+    re.IGNORECASE,
+)
+
+
+def normalize_deadline_text(raw: str | None) -> str | None:
+    if not raw:
+        return None
+
+    normalized = str(raw).strip().strip('()（）').strip()
+    normalized = DEADLINE_LABEL_PATTERN.sub('', normalized).strip()
+    return normalized or None
+
+
+def is_deadline_placeholder(raw: str | None) -> bool:
+    if not raw:
+        return True
+
+    normalized = str(raw).strip().strip('()（）').strip()
+    return normalize_deadline_text(normalized) is None
+
+
+def strip_deadline_fragment(text: str, match: re.Match[str]) -> str:
+    start, end = match.span()
+    stripped = f"{text[:start]}{text[end:]}".strip()
+    return stripped.rstrip('()（）').strip()
+
 
 @app.post("/api/v1/translation/extract_actions")
 async def extract_actions(content: TextContent):
@@ -107,7 +135,7 @@ def parse_action_items(text: str) -> list[dict]:
 
         # 移除列表标记
         cleaned = re.sub(r'^\s*[-*•]\s*', '', line)
-        cleaned = re.sub(r'^\s*\d+\.\s*', '', line)
+        cleaned = re.sub(r'^\s*\d+\.\s*', '', cleaned)
 
         if not cleaned or cleaned.lower() in ['无', '无待办事项', 'none', 'no action items', 'n/a']:
             continue
@@ -138,13 +166,15 @@ def parse_action_items(text: str) -> list[dict]:
         for pattern in deadline_patterns:
             deadline_match = re.search(pattern, task, re.IGNORECASE)
             if deadline_match:
-                potential_deadline = deadline_match.group(1).strip()
+                potential_deadline = normalize_deadline_text(deadline_match.group(1))
                 # 过滤掉非日期的内容
-                if re.search(r'\d|今天|明天|后天|周|星期|月|号|日|前|后', potential_deadline):
+                if potential_deadline and re.search(r'\d|今天|明天|后天|周|星期|月|号|日|前|后', potential_deadline):
                     deadline = potential_deadline
                     # 从任务中移除截止日期部分
-                    task = re.sub(r'\s*' + re.escape(deadline_match.group(0)) + r'$', '', task)
-                    task = task.strip()
+                    task = strip_deadline_fragment(task, deadline_match)
+                    break
+                if is_deadline_placeholder(deadline_match.group(1)):
+                    task = strip_deadline_fragment(task, deadline_match)
                     break
 
         if task:

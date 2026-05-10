@@ -39,10 +39,13 @@
           <div
             v-for="entry in virtualRows"
             :key="entry.subtitle.id"
-            :data-index="entry.virtualRow.index"
+            :data-subtitle-id="entry.subtitle.id"
             :ref="measureSubtitleElement"
             class="subtitle-item-wrapper"
-            :style="{ transform: `translateY(${entry.virtualRow.start}px)` }"
+            :style="{
+              transform: `translateY(${entry.virtualRow.start}px)`,
+              paddingBottom: entry.virtualRow.index === subtitlesWithTranslationState.length - 1 ? '0px' : '12px',
+            }"
           >
             <div class="subtitle-item">
               <div class="subtitle-meta">
@@ -83,6 +86,8 @@ import { useVirtualizer, type VirtualItem } from '@tanstack/vue-virtual'
 import type { RealtimeSentimentEntry } from '../types'
 import { useMeetingStore } from '../stores/meeting'
 import { resolveSubtitleTranslationDisplay } from '../stores/meetingMessageUtils'
+
+const DEFAULT_SUBTITLE_ROW_HEIGHT = 148
 
 const {
   subtitles,
@@ -126,18 +131,30 @@ const subtitlesWithTranslationState = computed<SubtitleWithTranslationState[]>((
   })),
 )
 
-// Keep the full subtitle history rendered efficiently instead of truncating old items.
+const subtitleContentSignature = computed(() =>
+  subtitlesWithTranslationState.value
+    .map((subtitle) => [
+      subtitle.id,
+      subtitle.text,
+      subtitle.translationDisplay.text ?? '',
+      subtitle.translationDisplay.pending ? 'pending' : 'ready',
+    ].join(':'))
+    .join('|'),
+)
+
+// Reuse the same mature virtualizer path as the summary lists so scroll behavior stays consistent.
 const rowVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>(
   computed(() => ({
     count: subtitlesWithTranslationState.value.length,
     getScrollElement: () => containerRef.value,
-    estimateSize: () => 144,
+    estimateSize: () => DEFAULT_SUBTITLE_ROW_HEIGHT,
     overscan: 5,
     getItemKey: (index: number) =>
       subtitlesWithTranslationState.value[index]?.id ?? `subtitle-${index}`,
   })),
 )
 
+const totalSize = computed(() => rowVirtualizer.value.getTotalSize())
 const virtualRows = computed<VirtualSubtitleRow[]>(() =>
   rowVirtualizer.value.getVirtualItems().reduce<VirtualSubtitleRow[]>((rows, virtualRow) => {
     const subtitle = subtitlesWithTranslationState.value[virtualRow.index]
@@ -147,8 +164,6 @@ const virtualRows = computed<VirtualSubtitleRow[]>(() =>
     return rows
   }, []),
 )
-
-const totalSize = computed(() => rowVirtualizer.value.getTotalSize())
 const latestRuntimeInfo = computed(() => runtimeInfoMessages.value.at(-1) ?? null)
 const latestRealtimeSentiments = computed<RealtimeSentimentEntry[]>(() => {
   // Keep one latest tag per speaker instead of stacking duplicate speaker updates.
@@ -190,6 +205,15 @@ function measureSubtitleElement(
   if (element instanceof Element) {
     rowVirtualizer.value.measureElement(element as HTMLDivElement)
   }
+}
+
+function scrollSubtitleViewportToLiveEdge(): void {
+  const lastIndex = subtitlesWithTranslationState.value.length - 1
+  if (lastIndex < 0) {
+    return
+  }
+
+  rowVirtualizer.value.scrollToIndex(lastIndex, { align: 'end' })
 }
 
 function isNearLiveEdge(): boolean {
@@ -263,11 +287,29 @@ function toneClass(label: string): string {
 }
 
 watch(
+  subtitleContentSignature,
+  async () => {
+    await nextTick()
+    rowVirtualizer.value.measure()
+  },
+)
+
+watch(
+  () => config.value.translationEnabled,
+  async () => {
+    await nextTick()
+    rowVirtualizer.value.measure()
+  },
+)
+
+watch(
   () => subtitles.value.length,
   async (count, previousCount) => {
     if (count === 0) {
       panelFocused.value = false
       historyPinned.value = false
+      await nextTick()
+      rowVirtualizer.value.measure()
       return
     }
 
@@ -276,10 +318,23 @@ watch(
     }
 
     await nextTick()
+    rowVirtualizer.value.measure()
     // Only follow the stream while the viewer stays at the live edge.
-    rowVirtualizer.value.scrollToIndex(count - 1, { align: 'start' })
+    scrollSubtitleViewportToLiveEdge()
   },
 )
+
+watch(totalSize, async () => {
+  await nextTick()
+
+  if (!subtitles.value.length) {
+    return
+  }
+
+  if (!panelFocused.value && !historyPinned.value) {
+    scrollSubtitleViewportToLiveEdge()
+  }
+})
 </script>
 
 <style scoped>
@@ -293,7 +348,9 @@ watch(
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: 900px;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
 }
 
 .panel-header {
@@ -343,6 +400,8 @@ watch(
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 14px;
 }
 
 .subtitle-container:focus-visible {
@@ -416,10 +475,10 @@ watch(
 
 .subtitle-list-shell {
   min-height: 100%;
-  padding-bottom: 12px;
 }
 
 .subtitle-list {
+  min-height: 100%;
   position: relative;
   width: 100%;
 }
@@ -429,7 +488,6 @@ watch(
   position: absolute;
   top: 0;
   width: 100%;
-  padding-bottom: 12px;
 }
 
 .subtitle-item {

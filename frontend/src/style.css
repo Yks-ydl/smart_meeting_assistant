@@ -3,7 +3,7 @@
   /* Shared panel height token keeps control and loading panels visually aligned. */
   --meeting-panel-min-height: 440px;
   --result-panel-height: min(760px, calc(100vh - 170px));
-  --result-list-max-height: 280px;
+  --result-list-max-height: clamp(360px, 42vh, 440px);
   --primary: #0ea5e9;
   --primary-dark: #0284c7;
   --danger: #dc2626;

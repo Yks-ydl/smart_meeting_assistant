@@ -1,5 +1,5 @@
 <template>
-  <div class="app-container">
+  <div class="app-container" :class="{ 'runtime-mode': showRuntimeSurface }">
     <header class="app-header">
       <div class="logo">
         <span class="logo-icon">🎙️</span>
@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMeetingStore } from './stores/meeting'
 import ControlPanel from './components/ControlPanel.vue'
 import SubtitlePanel from './components/SubtitlePanel.vue'
@@ -75,6 +75,7 @@ const summaryPanelRowRef = ref<HTMLDivElement | null>(null)
 
 let panelHeightObserver: ResizeObserver | null = null
 let syncedResultPanelHeight = 0
+let resultPanelSyncFrame = 0
 
 const showSummary = computed(() => {
   if (showRuntimeSurface.value) {
@@ -134,6 +135,17 @@ function syncResultPanelHeights(): void {
   })
 }
 
+function scheduleResultPanelSync(): void {
+  if (resultPanelSyncFrame) {
+    cancelAnimationFrame(resultPanelSyncFrame)
+  }
+
+  resultPanelSyncFrame = requestAnimationFrame(() => {
+    resultPanelSyncFrame = 0
+    syncResultPanelHeights()
+  })
+}
+
 function observeResultPanelHeights(): void {
   panelHeightObserver?.disconnect()
 
@@ -144,13 +156,17 @@ function observeResultPanelHeights(): void {
   }
 
   panelHeightObserver = new ResizeObserver(() => {
-    requestAnimationFrame(() => syncResultPanelHeights())
+    scheduleResultPanelSync()
   })
 
   row.querySelectorAll<HTMLElement>('.summary-panel, .sentiment-panel').forEach((panel) => {
     panelHeightObserver?.observe(panel)
   })
   syncResultPanelHeights()
+}
+
+function handleViewportResize(): void {
+  scheduleResultPanelSync()
 }
 
 watch(
@@ -162,8 +178,19 @@ watch(
   { immediate: true },
 )
 
+onMounted(() => {
+  window.addEventListener('resize', handleViewportResize)
+  window.visualViewport?.addEventListener('resize', handleViewportResize)
+})
+
 onBeforeUnmount(() => {
   panelHeightObserver?.disconnect()
+  if (resultPanelSyncFrame) {
+    cancelAnimationFrame(resultPanelSyncFrame)
+    resultPanelSyncFrame = 0
+  }
+  window.removeEventListener('resize', handleViewportResize)
+  window.visualViewport?.removeEventListener('resize', handleViewportResize)
   clearResultPanelMinHeight()
 })
 </script>
@@ -173,6 +200,11 @@ onBeforeUnmount(() => {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.app-container.runtime-mode {
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .app-header {
@@ -248,6 +280,7 @@ onBeforeUnmount(() => {
 .app-main {
   flex: 1;
   padding: 24px;
+  min-height: 0;
 }
 
 .dashboard-grid {
@@ -257,12 +290,14 @@ onBeforeUnmount(() => {
   max-width: 1600px;
   margin: 0 auto;
   height: 100%;
+  min-height: 0;
 }
 
 .sidebar {
   position: sticky;
   top: 100px;
   height: fit-content;
+  min-height: 0;
 }
 
 .content-area {
@@ -286,6 +321,26 @@ onBeforeUnmount(() => {
   align-items: stretch;
   flex: 1;
   min-height: 0;
+}
+
+.app-container.runtime-mode .app-main,
+.app-container.runtime-mode .content-area,
+.app-container.runtime-mode .realtime-section,
+.app-container.runtime-mode .panel-row {
+  overflow: hidden;
+}
+
+.app-container.runtime-mode .dashboard-grid {
+  align-items: stretch;
+}
+
+.app-container.runtime-mode .sidebar {
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.app-container.runtime-mode .panel-row {
+  height: 100%;
 }
 
 .summary-panel-row {

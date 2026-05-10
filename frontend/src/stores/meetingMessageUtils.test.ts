@@ -113,7 +113,7 @@ describe("buildActionItems", () => {
   test("prefers parsed_actions if available", () => {
     const input = {
       parsed_actions: [
-        { task: "准备演示材料", assignee: "王五", deadline: "明天" },
+        { task: "准备演示材料", assignee: "王五", dueDate: "日期: 明天" },
       ],
       action_items: "- 李四: 这条不应被采用",
     };
@@ -125,12 +125,23 @@ describe("buildActionItems", () => {
 
   test("falls back to parsing action_items markdown text", () => {
     const input = {
-      action_items: "- 张三: 完成项目文档 (周五前)\n- 安排评审会议",
+      action_items:
+        "- 张三: 完成项目文档 (截止日期: 周五前)\n- 安排评审会议 (日期)",
     };
 
     expect(buildActionItems(input)).toEqual([
       { task: "完成项目文档", assignee: "张三", deadline: "周五前" },
       { task: "安排评审会议", assignee: undefined, deadline: undefined },
+    ]);
+  });
+
+  test("normalizes localized deadline fields from structured action arrays", () => {
+    const input = {
+      action_items: [{ task: "安排联调", owner: "Carol", 截止日期: "下周三" }],
+    };
+
+    expect(buildActionItems(input)).toEqual([
+      { task: "安排联调", assignee: "Carol", deadline: "下周三" },
     ]);
   });
 });

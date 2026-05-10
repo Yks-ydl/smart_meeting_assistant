@@ -234,6 +234,7 @@
 1. 解析 `input_dir`；若请求未提供，则读取环境变量 `MEETING_AUDIO_INPUT_DIR`；若仍为空，则默认使用仓库根目录 `audio/`
 2. 调用 M6 `POST /api/v1/audio/process_directory`，并透传客户端提供的 `glob_pattern`
 3. 按既有契约流式发送 `info`、`asr_result`、`analysis_result`、`action_result`
+  - 默认按每 1.5 秒回放一条字幕；可用环境变量 `GATEWAY_REPLAY_DELAY_SEC` 覆盖
 4. 处理完已发出的片段后生成最终 `meeting_end_report`
 
 客户端可在回放过程中发送：

@@ -118,10 +118,13 @@ class GatewayDirectoryPipelineContractTest(unittest.TestCase):
                 )
 
                 received_types: list[str] = []
+                info_messages: list[str] = []
                 meeting_end_report = None
                 while True:
                     message = websocket.receive_json()
                     received_types.append(message["type"])
+                    if message["type"] == "info":
+                        info_messages.append(message.get("message", ""))
                     if message["type"] == "meeting_end_report":
                         meeting_end_report = message
                         break
@@ -131,6 +134,7 @@ class GatewayDirectoryPipelineContractTest(unittest.TestCase):
         self.assertIn("analysis_result", received_types)
         self.assertIn("action_result", received_types)
         self.assertEqual(received_types[-1], "meeting_end_report")
+        self.assertIn("收到一段就立即输出", info_messages[1])
         self.assertIsNotNone(meeting_end_report)
         self.assertIn("SUMMARY::", meeting_end_report["data"]["summary"]["summary"])
 
@@ -209,7 +213,9 @@ class GatewayDirectoryPipelineContractTest(unittest.TestCase):
                 )
 
                 self.assertEqual(websocket.receive_json()["type"], "info")
-                self.assertEqual(websocket.receive_json()["type"], "info")
+                replay_info = websocket.receive_json()
+                self.assertEqual(replay_info["type"], "info")
+                self.assertIn("每0.2秒输出一段", replay_info["message"])
                 first_segment = websocket.receive_json()
                 self.assertEqual(first_segment["type"], "asr_result")
 
